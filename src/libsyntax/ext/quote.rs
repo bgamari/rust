@@ -598,6 +598,8 @@ fn mk_tt(cx: &ExtCtxt, sp: Span, tt: &ast::TokenTree) -> Vec<@ast::Stmt> {
 
             vec!(cx.stmt_expr(e_push))
         }
+
+        ast::TTConcatIdent(ref tts) => mk_tts(cx, sp, tts.as_slice())
     }
 }
 

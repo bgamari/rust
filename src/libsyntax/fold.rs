@@ -408,8 +408,10 @@ pub fn fold_tts<T: Folder>(tts: &[TokenTree], fld: &mut T) -> Vec<TokenTree> {
                   Rc::new(fold_tts(pattern.as_slice(), fld)),
                   sep.as_ref().map(|tok|maybe_fold_ident(tok,fld)),
                   is_optional),
-            TTNonterminal(sp,ref ident) =>
-            TTNonterminal(sp,fld.fold_ident(*ident))
+            TTConcatIdent(ref tts) =>
+            TTConcatIdent(Rc::new(fold_tts(tts.as_slice(), fld))),
+            TTNonterminal(sp, ref ident) =>
+            TTNonterminal(sp, fld.fold_ident(*ident))
         }
     }).collect()
 }

@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use ast;
-use ast::{TokenTree, TTDelim, TTTok, TTSeq, TTNonterminal, Ident};
+use ast::{TokenTree, TTDelim, TTTok, TTSeq, TTNonterminal, TTConcatIdent,  Ident};
 use codemap::{Span, DUMMY_SP};
 use diagnostic::SpanHandler;
 use ext::tt::macro_parser::{NamedMatch, MatchedSeq, MatchedNonterminal};
@@ -134,6 +134,11 @@ fn lockstep_iter_size(t: &TokenTree, r: &TtReader) -> LockstepIterSize {
         TTNonterminal(_, name) => match *lookup_cur_matched(r, name) {
             MatchedNonterminal(_) => LisUnconstrained,
             MatchedSeq(ref ads, _) => LisConstraint(ads.len(), name)
+        },
+        TTConcatIdent(ref tts) => {
+            tts.iter().fold(LisUnconstrained, |lis, tt| {
+                lis_merge(lis, lockstep_iter_size(tt, r))
+            })
         }
     }
 }
@@ -273,6 +278,15 @@ pub fn tt_next_token(r: &mut TtReader) -> TokenAndSpan {
                                     token::get_ident(ident)).as_slice());
                     }
                 }
+            }
+            TTConcatIdent(ref tts) => {
+                // TODO: this is clearly wrong
+                r.stack.push(TtFrame {
+                    forest: tts,
+                    idx: 0,
+                    dotdotdoted: false,
+                    sep: Some(token::COMMA)
+                });
             }
         }
     }

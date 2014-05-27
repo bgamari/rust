@@ -869,6 +869,13 @@ impl<'a> State<'a> {
                 try!(word(&mut self.s, "$"));
                 self.print_ident(name)
             }
+            ast::TTConcatIdent(ref tts) => {
+                try!(word(&mut self.s, "$+("));
+                for tt_elt in (*tts).iter() {
+                    try!(self.print_tt(tt_elt));
+                }
+                word(&mut self.s, ")")
+            }
         }
     }
 

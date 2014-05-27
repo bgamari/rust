@@ -48,7 +48,8 @@ use ast::{StructVariantKind, BiSub};
 use ast::StrStyle;
 use ast::{SelfRegion, SelfStatic, SelfUniq, SelfValue};
 use ast::{TokenTree, TraitMethod, TraitRef, TTDelim, TTSeq, TTTok};
-use ast::{TTNonterminal, TupleVariantKind, Ty, Ty_, TyBot, TyBox};
+use ast::{TTNonterminal, TTConcatIdent};
+use ast::{TupleVariantKind, Ty, Ty_, TyBot, TyBox};
 use ast::{TypeField, TyFixedLengthVec, TyClosure, TyProc, TyBareFn};
 use ast::{TyTypeof, TyInfer, TypeMethod};
 use ast::{TyNil, TyParam, TyParamBound, TyPath, TyPtr, TyRptr};
@@ -2170,6 +2171,24 @@ impl<'a> Parser<'a> {
                 // There shouldn't really be a span, but it's easier for the test runner
                 // if we give it one
                 self.fatal("this file contains an un-closed delimiter ");
+            }
+            (&token::DOLLAR, _)
+              if self.look_ahead(1, |t| *t == token::BINOP(token::PLUS)) &&
+                  self.look_ahead(2, |t| *t == token::DOLLAR) => {
+                // Parse the open delimiter.
+                self.bump();
+                self.open_braces.push(self.span);
+                let mut result = vec!(parse_any_tt_tok(self));
+                let trees =
+                    self.parse_seq_to_end(&token::RPAREN,
+                                          seq_sep_trailing_allowed(token::COMMA),
+                                          |p| p.parse_token_tree());
+                result.push_all_move(trees);
+
+                // Parse the close delimiter.
+                self.open_braces.pop().unwrap();
+
+                TTConcatIdent(Rc::new(result))
             }
             (_, Some(close_delim)) => {
                 // Parse the open delimiter.

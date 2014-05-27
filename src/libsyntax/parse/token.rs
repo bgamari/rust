@@ -97,6 +97,7 @@ pub enum Token {
 
     /* For interpolation */
     INTERPOLATED(Nonterminal),
+    CONCATENATED(Rc<Vec<Nonterminal>>),
 
     DOC_COMMENT(ast::Ident),
     EOF,
