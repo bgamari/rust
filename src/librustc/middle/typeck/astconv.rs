@@ -504,6 +504,7 @@ pub fn ast_ty_to_builtin_ty<AC:AstConv,
     }
 }
 
+#[deriving(Show)]
 enum PointerTy {
     Box,
     RPtr(ty::Region),
@@ -565,7 +566,7 @@ fn mk_pointer<AC:AstConv,
               constr: |ty::t| -> ty::t)
               -> ty::t {
     let tcx = this.tcx();
-    debug!("mk_pointer(ptr_ty={:?})", ptr_ty);
+    debug!("mk_pointer(ptr_ty={})", ptr_ty);
 
     match a_seq_ty.ty.node {
         ast::TyVec(ref ty) => {
