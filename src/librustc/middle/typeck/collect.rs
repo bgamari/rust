@@ -486,6 +486,9 @@ pub fn convert(ccx: &CrateCtxt, it: &ast::Item) {
             // Write the class type.
             let pty = ty_of_item(ccx, it);
             write_ty_to_tcx(tcx, it.id, pty.ty);
+            debug!("convert(struct) def={}", struct_def);
+            debug!("convert(struct) generics={}", generics);
+            debug!("convert(struct) pty={}", pty);
 
             tcx.tcache.borrow_mut().insert(local_def(it.id), pty.clone());
 
@@ -525,6 +528,7 @@ pub fn convert_struct(ccx: &CrateCtxt,
                       pty: ty::Polytype,
                       id: ast::NodeId) {
     let tcx = ccx.tcx;
+    debug!("convert_struct id={}, pty={}", id, pty)
 
     // Write the type of each of the members and check for duplicate fields.
     let mut seen_fields: HashMap<ast::Name, Span> = HashMap::new();
@@ -590,7 +594,9 @@ pub fn convert_struct(ccx: &CrateCtxt,
     tcx.superstructs.borrow_mut().insert(local_def(id), super_struct);
 
     let substs = mk_item_substs(ccx, &pty.generics);
+    debug!("convert_struct substs={}", substs);
     let selfty = ty::mk_struct(tcx, local_def(id), substs);
+    debug!("convert_struct selfty={}", ty::get(selfty));
 
     // If this struct is enum-like or tuple-like, create the type of its
     // constructor.
@@ -807,6 +813,7 @@ pub fn trait_def_of_item(ccx: &CrateCtxt, it: &ast::Item) -> Rc<ty::TraitDef> {
 
 pub fn ty_of_item(ccx: &CrateCtxt, it: &ast::Item)
                   -> ty::Polytype {
+    debug!("ty_of_item it={}", it);
     let def_id = local_def(it.id);
     let tcx = ccx.tcx;
     match tcx.tcache.borrow().find(&def_id) {
@@ -877,6 +884,8 @@ pub fn ty_of_item(ccx: &CrateCtxt, it: &ast::Item)
         ast::ItemStruct(_, ref generics) => {
             let ty_generics = ty_generics_for_type(ccx, generics);
             let substs = mk_item_substs(ccx, &ty_generics);
+            debug!("ty_of_item(Struct) ty_generics={}", ty_generics);
+            debug!("ty_of_item(Struct) substs={}", substs);
             let t = ty::mk_struct(tcx, local_def(it.id), substs);
             let pty = Polytype {
                 generics: ty_generics,
@@ -1012,17 +1021,20 @@ fn ty_generics(ccx: &CrateCtxt,
 {
     let mut result = base_generics;
 
+    debug!("ty_generics space={}", space);
+    debug!("ty_generics base_generics={}", result);
     for (i, l) in lifetimes.iter().enumerate() {
-        result.regions.push(space,
-                            ty::RegionParameterDef { name: l.name,
-                                                     space: space,
-                                                     index: i,
-                                                     def_id: local_def(l.id) });
+        let def = ty::RegionParameterDef { name: l.name,
+                                           space: space,
+                                           index: i,
+                                           def_id: local_def(l.id) };
+        debug!("ty_generics: def for region param: {}", def);
+        result.regions.push(space, def);
     }
 
     for (i, param) in types.iter().enumerate() {
         let def = get_or_create_type_parameter_def(ccx, space, param, i);
-        debug!("def for param: {}", def.repr(ccx.tcx));
+        debug!("ty_generics: def for type param: {}", def.repr(ccx.tcx));
         result.types.push(space, def);
     }
 
@@ -1237,5 +1249,6 @@ pub fn mk_item_substs(ccx: &CrateCtxt,
             |def| ty::ReEarlyBound(def.def_id.node, def.space,
                                    def.index, def.name));
 
+    debug!("mk_item_substs generics={}", ty_generics);
     subst::Substs::new(types, regions)
 }

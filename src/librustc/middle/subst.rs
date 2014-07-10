@@ -578,6 +578,7 @@ impl<'a> TypeFolder for SubstFolder<'a> {
                             Some(t) => *t,
                             None => {
                               let span = self.span.unwrap_or(DUMMY_SP);
+                              debug!("fold_region: self.substs={}", self.substs);
                               self.tcx().sess.span_bug(
                                   span,
                                   format!("Type parameter out of range \

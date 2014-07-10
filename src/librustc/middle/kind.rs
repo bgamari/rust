@@ -87,7 +87,8 @@ fn check_struct_safe_for_destructor(cx: &mut Context,
                                     span: Span,
                                     struct_did: DefId) {
     let struct_tpt = ty::lookup_item_type(cx.tcx, struct_did);
-    if !struct_tpt.generics.has_type_params(subst::TypeSpace) {
+    if !struct_tpt.generics.has_type_params(subst::TypeSpace)
+      && !struct_tpt.generics.has_region_params(subst::TypeSpace) {
         let struct_ty = ty::mk_struct(cx.tcx, struct_did,
                                       subst::Substs::empty());
         if !ty::type_is_sendable(cx.tcx, struct_ty) {
@@ -140,6 +141,7 @@ fn check_impl_of_trait(cx: &mut Context, it: &Item, trait_ref: &TraitRef, self_t
                 assert!(bounds.is_none());
                 let struct_def = cx.tcx.def_map.borrow().get_copy(&path_node_id);
                 let struct_did = struct_def.def_id();
+                debug!("check_impl_of_trait did={}  def={}", struct_did, struct_def);
                 check_struct_safe_for_destructor(cx, self_type.span, struct_did);
             }
             _ => {

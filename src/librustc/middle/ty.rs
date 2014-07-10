@@ -394,6 +394,7 @@ pub enum tbox_flag {
 
 pub type t_box = &'static t_box_;
 
+#[deriving(Show)]
 pub struct t_box_ {
     pub sty: sty,
     pub id: uint,
@@ -748,7 +749,7 @@ pub struct TyTrait {
     pub bounds: BuiltinBounds
 }
 
-#[deriving(PartialEq, Eq, Hash)]
+#[deriving(PartialEq, Eq, Hash, Show)]
 pub struct TraitRef {
     pub def_id: DefId,
     pub substs: Substs,
@@ -808,7 +809,7 @@ pub enum type_err {
     terr_variadic_mismatch(expected_found<bool>)
 }
 
-#[deriving(PartialEq, Eq, Hash)]
+#[deriving(PartialEq, Eq, Hash, Show)]
 pub struct ParamBounds {
     pub builtin_bounds: BuiltinBounds,
     pub trait_bounds: Vec<Rc<TraitRef>>
@@ -948,7 +949,7 @@ impl fmt::Show for IntVarValue {
     }
 }
 
-#[deriving(Clone)]
+#[deriving(Clone, Show)]
 pub struct TypeParameterDef {
     pub ident: ast::Ident,
     pub def_id: ast::DefId,
@@ -958,7 +959,7 @@ pub struct TypeParameterDef {
     pub default: Option<ty::t>
 }
 
-#[deriving(Encodable, Decodable, Clone)]
+#[deriving(Encodable, Decodable, Clone, Show)]
 pub struct RegionParameterDef {
     pub name: ast::Name,
     pub def_id: ast::DefId,
@@ -968,7 +969,7 @@ pub struct RegionParameterDef {
 
 /// Information about the type/lifetime parameters associated with an
 /// item or method. Analogous to ast::Generics.
-#[deriving(Clone)]
+#[deriving(Clone, Show)]
 pub struct Generics {
     pub types: VecPerParamSpace<TypeParameterDef>,
     pub regions: VecPerParamSpace<RegionParameterDef>,
@@ -982,6 +983,10 @@ impl Generics {
 
     pub fn has_type_params(&self, space: subst::ParamSpace) -> bool {
         !self.types.is_empty_in(space)
+    }
+
+    pub fn has_region_params(&self, space: subst::ParamSpace) -> bool {
+        !self.regions.is_empty_in(space)
     }
 }
 
@@ -1014,7 +1019,7 @@ pub struct ParameterEnvironment {
 /// - `generics`: the set of type parameters and their bounds
 /// - `ty`: the base types, which may reference the parameters defined
 ///   in `generics`
-#[deriving(Clone)]
+#[deriving(Clone, Show)]
 pub struct Polytype {
     pub generics: Generics,
     pub ty: t
@@ -2063,6 +2068,7 @@ pub fn type_contents(cx: &ctxt, ty: t) -> TypeContents {
             }
 
             ty_struct(did, ref substs) => {
+                debug!("type_contents: did={}  substs={}", did, substs);
                 let flds = struct_fields(cx, did, substs);
                 let mut res =
                     TypeContents::union(flds.as_slice(),
