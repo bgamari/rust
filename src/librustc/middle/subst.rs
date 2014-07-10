@@ -83,7 +83,7 @@ impl<T> HomogeneousTuple3<T> for (T, T, T) {
  * space* (which indices where the parameter is defined; see
  * `ParamSpace`).
  */
-#[deriving(Clone, PartialEq, Eq, Hash)]
+#[deriving(Clone, PartialEq, Eq, Hash, Show)]
 pub struct Substs {
     pub types: VecPerParamSpace<ty::t>,
     pub regions: RegionSubsts,
@@ -93,7 +93,7 @@ pub struct Substs {
  * Represents the values to use when substituting lifetime parameters.
  * If the value is `ErasedRegions`, then this subst is occurring during
  * trans, and all region parameters will be replaced with `ty::ReStatic`. */
-#[deriving(Clone, PartialEq, Eq, Hash)]
+#[deriving(Clone, PartialEq, Eq, Hash, Show)]
 pub enum RegionSubsts {
     ErasedRegions,
     NonerasedRegions(VecPerParamSpace<ty::Region>)
@@ -258,7 +258,7 @@ impl ParamSpace {
  * the set of things declared on the type, self, or method
  * distinct.
  */
-#[deriving(PartialEq, Eq, Clone, Hash, Encodable, Decodable)]
+#[deriving(PartialEq, Eq, Clone, Hash, Encodable, Decodable, Show)]
 pub struct VecPerParamSpace<T> {
     // This was originally represented as a tuple with one Vec<T> for
     // each variant of ParamSpace, and that remains the abstraction

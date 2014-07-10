@@ -1091,7 +1091,7 @@ pub struct TraitRef {
     pub ref_id: NodeId,
 }
 
-#[deriving(Clone, PartialEq, Eq, Encodable, Decodable, Hash)]
+#[deriving(Clone, PartialEq, Eq, Encodable, Decodable, Hash, Show)]
 pub enum Visibility {
     Public,
     Inherited,
