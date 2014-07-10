@@ -15,6 +15,7 @@ use middle::ty_fold;
 use middle::ty_fold::{TypeFoldable, TypeFolder};
 use util::ppaux::Repr;
 
+use std::fmt;
 use std::mem;
 use std::raw;
 use std::slice::{Items, MutItems};
@@ -258,7 +259,7 @@ impl ParamSpace {
  * the set of things declared on the type, self, or method
  * distinct.
  */
-#[deriving(PartialEq, Eq, Clone, Hash, Encodable, Decodable, Show)]
+#[deriving(PartialEq, Eq, Clone, Hash, Encodable, Decodable)]
 pub struct VecPerParamSpace<T> {
     // This was originally represented as a tuple with one Vec<T> for
     // each variant of ParamSpace, and that remains the abstraction
@@ -273,6 +274,17 @@ pub struct VecPerParamSpace<T> {
     type_limit: uint,
     self_limit: uint,
     content: Vec<T>,
+}
+
+impl<T:fmt::Show> fmt::Show for VecPerParamSpace<T> {
+  fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    try!(write!(fmt, "VecPerParamSpace {{"));
+    for space in ParamSpace::all().iter() {
+      try!(write!(fmt, "{}: {}, ", *space, self.get_slice(*space)));
+    }
+    try!(write!(fmt, "}}"));
+    Ok(())
+  }
 }
 
 impl<T:Clone> VecPerParamSpace<T> {
