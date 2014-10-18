@@ -60,7 +60,7 @@ pub fn trans_impl(ccx: &CrateContext,
     let _icx = push_ctxt("meth::trans_impl");
     let tcx = ccx.tcx();
 
-    debug!("trans_impl(name={}, id={:?})", name.repr(tcx), id);
+    debug!("trans_impl(name={}, id={})", name.repr(tcx), id);
 
     // Both here and below with generic methods, be sure to recurse and look for
     // items that we need to translate.
@@ -174,8 +174,8 @@ pub fn trans_static_method_callee(bcx: Block,
     let _icx = push_ctxt("meth::trans_static_method_callee");
     let ccx = bcx.ccx();
 
-    debug!("trans_static_method_callee(method_id={:?}, trait_id={}, \
-            expr_id={:?})",
+    debug!("trans_static_method_callee(method_id={}, trait_id={}, \
+            expr_id={})",
            method_id,
            ty::item_path_str(bcx.tcx(), trait_id),
            expr_id);
@@ -561,7 +561,7 @@ pub fn get_vtable(bcx: Block,
                                         DUMMY_SP,
                                         trait_ref.clone());
         match vtable {
-            traits::VtableBuiltin => {
+            traits::VtableBuiltin(_) => {
                 Vec::new().into_iter()
             }
             traits::VtableImpl(
@@ -648,9 +648,9 @@ pub fn get_vtable(bcx: Block,
 
     let size_ty = sizing_type_of(ccx, trait_ref.self_ty());
     let size = machine::llsize_of_alloc(ccx, size_ty);
-    let ll_size = C_uint(ccx, size as uint);
+    let ll_size = C_uint(ccx, size);
     let align = align_of(ccx, trait_ref.self_ty());
-    let ll_align = C_uint(ccx, align as uint);
+    let ll_align = C_uint(ccx, align);
 
     // Generate a destructor for the vtable.
     let drop_glue = glue::get_drop_glue(ccx, box_ty);

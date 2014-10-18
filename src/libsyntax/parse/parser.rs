@@ -26,13 +26,13 @@ use ast::{ExprField, ExprTupField, ExprFnBlock, ExprIf, ExprIfLet, ExprIndex, Ex
 use ast::{ExprLit, ExprLoop, ExprMac};
 use ast::{ExprMethodCall, ExprParen, ExprPath, ExprProc};
 use ast::{ExprRepeat, ExprRet, ExprStruct, ExprTup, ExprUnary, ExprUnboxedFn};
-use ast::{ExprVec, ExprWhile, ExprForLoop, Field, FnDecl};
+use ast::{ExprVec, ExprWhile, ExprWhileLet, ExprForLoop, Field, FnDecl};
 use ast::{Once, Many};
 use ast::{FnUnboxedClosureKind, FnMutUnboxedClosureKind};
 use ast::{FnOnceUnboxedClosureKind};
 use ast::{ForeignItem, ForeignItemStatic, ForeignItemFn, ForeignMod};
 use ast::{Ident, NormalFn, Inherited, ImplItem, Item, Item_, ItemStatic};
-use ast::{ItemEnum, ItemFn, ItemForeignMod, ItemImpl};
+use ast::{ItemEnum, ItemFn, ItemForeignMod, ItemImpl, ItemConst};
 use ast::{ItemMac, ItemMod, ItemStruct, ItemTrait, ItemTy};
 use ast::{LifetimeDef, Lit, Lit_};
 use ast::{LitBool, LitChar, LitByte, LitBinary};
@@ -91,10 +91,10 @@ use std::iter;
 
 bitflags! {
     flags Restrictions: u8 {
-        static UNRESTRICTED                  = 0b0000,
-        static RESTRICTION_STMT_EXPR         = 0b0001,
-        static RESTRICTION_NO_BAR_OP         = 0b0010,
-        static RESTRICTION_NO_STRUCT_LITERAL = 0b0100
+        const UNRESTRICTED                  = 0b0000,
+        const RESTRICTION_STMT_EXPR         = 0b0001,
+        const RESTRICTION_NO_BAR_OP         = 0b0010,
+        const RESTRICTION_NO_STRUCT_LITERAL = 0b0100
     }
 }
 
@@ -492,7 +492,7 @@ impl<'a> Parser<'a> {
     /// followed by some token from the set edible + inedible.  Recover
     /// from anticipated input errors, discarding erroneous characters.
     pub fn commit_expr(&mut self, e: &Expr, edible: &[token::Token], inedible: &[token::Token]) {
-        debug!("commit_expr {:?}", e);
+        debug!("commit_expr {}", e);
         match e.node {
             ExprPath(..) => {
                 // might be unit-struct construction; check for recoverableinput error.
@@ -958,6 +958,9 @@ impl<'a> Parser<'a> {
     }
     pub fn span_note(&mut self, sp: Span, m: &str) {
         self.sess.span_diagnostic.span_note(sp, m)
+    }
+    pub fn span_help(&mut self, sp: Span, m: &str) {
+        self.sess.span_diagnostic.span_help(sp, m)
     }
     pub fn bug(&mut self, m: &str) -> ! {
         self.sess.span_diagnostic.span_bug(self.span, m)
@@ -1535,7 +1538,7 @@ impl<'a> Parser<'a> {
             // TYPE TO BE INFERRED
             TyInfer
         } else {
-            let msg = format!("expected type, found token {:?}", self.token);
+            let msg = format!("expected type, found token {}", self.token);
             self.fatal(msg.as_slice());
         };
 
@@ -1591,7 +1594,7 @@ impl<'a> Parser<'a> {
     /// identifier names.
     pub fn parse_arg_general(&mut self, require_name: bool) -> Arg {
         let pat = if require_name || self.is_named_argument() {
-            debug!("parse_arg_general parse_pat (require_name:{:?})",
+            debug!("parse_arg_general parse_pat (require_name:{})",
                    require_name);
             let pat = self.parse_pat();
 
@@ -1882,7 +1885,7 @@ impl<'a> Parser<'a> {
                 token::BINOP(token::SHR) => { return res; }
                 _ => {
                     let msg = format!("expected `,` or `>` after lifetime \
-                                      name, got: {:?}",
+                                      name, got: {}",
                                       self.token);
                     self.fatal(msg.as_slice());
                 }
@@ -2935,12 +2938,28 @@ impl<'a> Parser<'a> {
         self.mk_expr(lo, hi, ExprForLoop(pat, expr, loop_block, opt_ident))
     }
 
+    /// Parse a 'while' or 'while let' expression ('while' token already eaten)
     pub fn parse_while_expr(&mut self, opt_ident: Option<ast::Ident>) -> P<Expr> {
+        if self.is_keyword(keywords::Let) {
+            return self.parse_while_let_expr(opt_ident);
+        }
         let lo = self.last_span.lo;
         let cond = self.parse_expr_res(RESTRICTION_NO_STRUCT_LITERAL);
         let body = self.parse_block();
         let hi = body.span.hi;
         return self.mk_expr(lo, hi, ExprWhile(cond, body, opt_ident));
+    }
+
+    /// Parse a 'while let' expression ('while' token already eaten)
+    pub fn parse_while_let_expr(&mut self, opt_ident: Option<ast::Ident>) -> P<Expr> {
+        let lo = self.last_span.lo;
+        self.expect_keyword(keywords::Let);
+        let pat = self.parse_pat();
+        self.expect(&token::EQ);
+        let expr = self.parse_expr_res(RESTRICTION_NO_STRUCT_LITERAL);
+        let body = self.parse_block();
+        let hi = body.span.hi;
+        return self.mk_expr(lo, hi, ExprWhileLet(pat, expr, body, opt_ident));
     }
 
     pub fn parse_loop_expr(&mut self, opt_ident: Option<ast::Ident>) -> P<Expr> {
@@ -4540,24 +4559,14 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse struct Foo { ... }
-    fn parse_item_struct(&mut self, is_virtual: bool) -> ItemInfo {
+    fn parse_item_struct(&mut self) -> ItemInfo {
         let class_name = self.parse_ident();
         let mut generics = self.parse_generics();
 
-        let super_struct = if self.eat(&token::COLON) {
+        if self.eat(&token::COLON) {
             let ty = self.parse_ty(true);
-            match ty.node {
-                TyPath(_, None, _) => {
-                    Some(ty)
-                }
-                _ => {
-                    self.span_err(ty.span, "not a struct");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+            self.span_err(ty.span, "`virtual` structs have been removed from the language");
+        }
 
         self.parse_where_clause(&mut generics);
 
@@ -4618,8 +4627,6 @@ impl<'a> Parser<'a> {
          ItemStruct(P(ast::StructDef {
              fields: fields,
              ctor_id: if is_tuple_like { Some(new_id) } else { None },
-             super_struct: super_struct,
-             is_virtual: is_virtual,
          }), generics),
          None)
     }
@@ -4707,7 +4714,7 @@ impl<'a> Parser<'a> {
                 attrs = attrs_remaining.clone().append(attrs.as_slice());
                 first = false;
             }
-            debug!("parse_mod_items: parse_item_or_view_item(attrs={:?})",
+            debug!("parse_mod_items: parse_item_or_view_item(attrs={})",
                    attrs);
             match self.parse_item_or_view_item(attrs,
                                                true /* macros allowed */) {
@@ -4739,14 +4746,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_item_const(&mut self, m: Mutability) -> ItemInfo {
+    fn parse_item_const(&mut self, m: Option<Mutability>) -> ItemInfo {
         let id = self.parse_ident();
         self.expect(&token::COLON);
         let ty = self.parse_ty(true);
         self.expect(&token::EQ);
         let e = self.parse_expr();
         self.commit_expr_expecting(&*e, token::SEMI);
-        (id, ItemStatic(ty, m, e), None)
+        let item = match m {
+            Some(m) => ItemStatic(ty, m, e),
+            None => ItemConst(ty, e),
+        };
+        (id, item, None)
     }
 
     /// Parse a `mod <foo> { ... }` or `mod <foo>;` item
@@ -4988,18 +4999,27 @@ impl<'a> Parser<'a> {
                                 attrs: Vec<Attribute> )
                                 -> ItemOrViewItem {
 
+        let span = self.span;
         let (maybe_path, ident) = match self.token {
             token::IDENT(..) => {
                 let the_ident = self.parse_ident();
-                self.expect_one_of(&[], &[token::EQ, token::SEMI]);
-                let path = if self.token == token::EQ {
-                    self.bump();
+                let path = if self.eat(&token::EQ) {
                     let path = self.parse_str();
                     let span = self.span;
                     self.obsolete(span, ObsoleteExternCrateRenaming);
                     Some(path)
-                } else {None};
+                } else if self.eat_keyword(keywords::As) {
+                    // skip the ident if there is one
+                    if is_ident(&self.token) { self.bump(); }
 
+                    self.span_err(span,
+                                  format!("expected `;`, found `as`; perhaps you meant \
+                                          to enclose the crate name `{}` in a string?",
+                                          the_ident.as_str()).as_slice());
+                    None
+                } else {
+                    None
+                };
                 self.expect(&token::SEMI);
                 (path, the_ident)
             },
@@ -5086,8 +5106,6 @@ impl<'a> Parser<'a> {
         P(StructDef {
             fields: fields,
             ctor_id: None,
-            super_struct: None,
-            is_virtual: false,
         })
     }
 
@@ -5284,11 +5302,9 @@ impl<'a> Parser<'a> {
                                     token_str).as_slice());
         }
 
-        let is_virtual = self.eat_keyword(keywords::Virtual);
-        if is_virtual && !self.is_keyword(keywords::Struct) {
+        if self.eat_keyword(keywords::Virtual) {
             let span = self.span;
-            self.span_err(span,
-                          "`virtual` keyword may only be used with `struct`");
+            self.span_err(span, "`virtual` structs have been removed from the language");
         }
 
         // the rest are all guaranteed to be items:
@@ -5296,7 +5312,7 @@ impl<'a> Parser<'a> {
             // STATIC ITEM
             self.bump();
             let m = if self.eat_keyword(keywords::Mut) {MutMutable} else {MutImmutable};
-            let (ident, item_, extra_attrs) = self.parse_item_const(m);
+            let (ident, item_, extra_attrs) = self.parse_item_const(Some(m));
             let last_span = self.last_span;
             let item = self.mk_item(lo,
                                     last_span.hi,
@@ -5314,7 +5330,7 @@ impl<'a> Parser<'a> {
                 self.span_err(last_span, "const globals cannot be mutable, \
                                           did you mean to declare a static?");
             }
-            let (ident, item_, extra_attrs) = self.parse_item_const(MutImmutable);
+            let (ident, item_, extra_attrs) = self.parse_item_const(None);
             let last_span = self.last_span;
             let item = self.mk_item(lo,
                                     last_span.hi,
@@ -5423,7 +5439,7 @@ impl<'a> Parser<'a> {
         }
         if self.eat_keyword(keywords::Struct) {
             // STRUCT ITEM
-            let (ident, item_, extra_attrs) = self.parse_item_struct(is_virtual);
+            let (ident, item_, extra_attrs) = self.parse_item_struct();
             let last_span = self.last_span;
             let item = self.mk_item(lo,
                                     last_span.hi,

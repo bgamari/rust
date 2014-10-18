@@ -36,7 +36,6 @@
 use back::abi;
 use llvm;
 use llvm::{ValueRef};
-use metadata::csearch;
 use middle::def;
 use middle::mem_categorization::Typer;
 use middle::subst;
@@ -667,7 +666,7 @@ fn trans_datum_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             bcx.tcx().sess.span_bug(
                 expr.span,
                 format!("trans_rvalue_datum_unadjusted reached \
-                         fall-through case: {:?}",
+                         fall-through case: {}",
                         expr.node).as_slice());
         }
     }
@@ -839,25 +838,20 @@ fn trans_def<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             trans_def_fn_unadjusted(bcx, ref_expr, def)
         }
         def::DefStatic(did, _) => {
-            // There are three things that may happen here:
+            // There are two things that may happen here:
             //  1) If the static item is defined in this crate, it will be
             //     translated using `get_item_val`, and we return a pointer to
             //     the result.
-            //  2) If the static item is defined in another crate, but is
-            //     marked inlineable, then it will be inlined into this crate
-            //     and then translated with `get_item_val`.  Again, we return a
-            //     pointer to the result.
-            //  3) If the static item is defined in another crate and is not
-            //     marked inlineable, then we add (or reuse) a declaration of
-            //     an external global, and return a pointer to that.
+            //  2) If the static item is defined in another crate then we add
+            //     (or reuse) a declaration of an external global, and return a
+            //     pointer to that.
             let const_ty = expr_ty(bcx, ref_expr);
 
-            fn get_val<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, did: ast::DefId, const_ty: ty::t)
-                                   -> ValueRef {
+            fn get_val<'blk, 'tcx>(bcx: Block<'blk, 'tcx>, did: ast::DefId,
+                                   const_ty: ty::t) -> ValueRef {
                 // For external constants, we don't inline.
                 if did.krate == ast::LOCAL_CRATE {
-                    // Case 1 or 2.  (The inlining in case 2 produces a new
-                    // DefId in LOCAL_CRATE.)
+                    // Case 1.
 
                     // The LLVM global has the type of its initializer,
                     // which may not be equal to the enum's type for
@@ -866,35 +860,40 @@ fn trans_def<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                     let pty = type_of::type_of(bcx.ccx(), const_ty).ptr_to();
                     PointerCast(bcx, val, pty)
                 } else {
-                    // Case 3.
-                    match bcx.ccx().extern_const_values().borrow().find(&did) {
-                        None => {}  // Continue.
-                        Some(llval) => {
-                            return *llval;
-                        }
-                    }
-
-                    unsafe {
-                        let llty = type_of::type_of(bcx.ccx(), const_ty);
-                        let symbol = csearch::get_symbol(
-                            &bcx.ccx().sess().cstore,
-                            did);
-                        let llval = symbol.as_slice().with_c_str(|buf| {
-                                llvm::LLVMAddGlobal(bcx.ccx().llmod(),
-                                                    llty.to_ref(),
-                                                    buf)
-                            });
-                        bcx.ccx().extern_const_values().borrow_mut()
-                           .insert(did, llval);
-                        llval
-                    }
+                    // Case 2.
+                    base::get_extern_const(bcx.ccx(), did, const_ty)
                 }
             }
-            // The DefId produced by `maybe_instantiate_inline`
-            // may be in the LOCAL_CRATE or not.
-            let did = inline::maybe_instantiate_inline(bcx.ccx(), did);
             let val = get_val(bcx, did, const_ty);
             DatumBlock::new(bcx, Datum::new(val, const_ty, LvalueExpr))
+        }
+        def::DefConst(did) => {
+            // First, inline any external constants into the local crate so we
+            // can be sure to get the LLVM value corresponding to it.
+            let did = inline::maybe_instantiate_inline(bcx.ccx(), did);
+            if did.krate != ast::LOCAL_CRATE {
+                bcx.tcx().sess.span_bug(ref_expr.span,
+                                        "cross crate constant could not \
+                                         be inlined");
+            }
+            let val = base::get_item_val(bcx.ccx(), did.node);
+
+            // Next, we need to crate a ByRef rvalue datum to return. We can't
+            // use the normal .to_ref_datum() function because the type of
+            // `val` is not actually the same as `const_ty`.
+            //
+            // To get around this, we make a custom alloca slot with the
+            // appropriate type (const_ty), and then we cast it to a pointer of
+            // typeof(val), store the value, and then hand this slot over to
+            // the datum infrastructure.
+            let const_ty = expr_ty(bcx, ref_expr);
+            let llty = type_of::type_of(bcx.ccx(), const_ty);
+            let slot = alloca(bcx, llty, "const");
+            let pty = Type::from_ref(unsafe { llvm::LLVMTypeOf(val) }).ptr_to();
+            Store(bcx, val, PointerCast(bcx, slot, pty));
+
+            let datum = Datum::new(slot, const_ty, Rvalue::new(ByRef));
+            DatumBlock::new(bcx, datum.to_expr_datum())
         }
         _ => {
             DatumBlock::new(bcx, trans_local_var(bcx, def).to_expr_datum())
@@ -983,7 +982,7 @@ fn trans_rvalue_stmt_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             bcx.tcx().sess.span_bug(
                 expr.span,
                 format!("trans_rvalue_stmt_unadjusted reached \
-                         fall-through case: {:?}",
+                         fall-through case: {}",
                         expr.node).as_slice());
         }
     }
@@ -1129,7 +1128,7 @@ fn trans_rvalue_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             bcx.tcx().sess.span_bug(
                 expr.span,
                 format!("trans_rvalue_dps_unadjusted reached fall-through \
-                         case: {:?}",
+                         case: {}",
                         expr.node).as_slice());
         }
     }
@@ -1177,7 +1176,7 @@ fn trans_def_dps_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         }
         _ => {
             bcx.tcx().sess.span_bug(ref_expr.span, format!(
-                "Non-DPS def {:?} referened by {}",
+                "Non-DPS def {} referened by {}",
                 def, bcx.node_id_to_string(ref_expr.id)).as_slice());
         }
     }
@@ -1201,7 +1200,7 @@ fn trans_def_fn_unadjusted<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
         }
         _ => {
             bcx.tcx().sess.span_bug(ref_expr.span, format!(
-                    "trans_def_fn_unadjusted invoked on: {:?} for {}",
+                    "trans_def_fn_unadjusted invoked on: {} for {}",
                     def,
                     ref_expr.repr(bcx.tcx())).as_slice());
         }
@@ -1229,7 +1228,7 @@ pub fn trans_local_var<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                 Some(&val) => Datum::new(val, local_ty, Lvalue),
                 None => {
                     bcx.sess().bug(format!(
-                        "trans_local_var: no llval for upvar {:?} found",
+                        "trans_local_var: no llval for upvar {} found",
                         nid).as_slice());
                 }
             }
@@ -1239,17 +1238,17 @@ pub fn trans_local_var<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                 Some(&v) => v,
                 None => {
                     bcx.sess().bug(format!(
-                        "trans_local_var: no datum for local/arg {:?} found",
+                        "trans_local_var: no datum for local/arg {} found",
                         nid).as_slice());
                 }
             };
-            debug!("take_local(nid={:?}, v={}, ty={})",
+            debug!("take_local(nid={}, v={}, ty={})",
                    nid, bcx.val_to_string(datum.val), bcx.ty_to_string(datum.ty));
             datum
         }
         _ => {
             bcx.sess().unimpl(format!(
-                "unsupported def type in trans_local_var: {:?}",
+                "unsupported def type in trans_local_var: {}",
                 def).as_slice());
         }
     }
@@ -1549,7 +1548,7 @@ fn trans_uniq_expr<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
     assert!(ty::type_is_sized(bcx.tcx(), contents_ty));
     let llty = type_of::type_of(bcx.ccx(), contents_ty);
     let size = llsize_of(bcx.ccx(), llty);
-    let align = C_uint(bcx.ccx(), type_of::align_of(bcx.ccx(), contents_ty) as uint);
+    let align = C_uint(bcx.ccx(), type_of::align_of(bcx.ccx(), contents_ty));
     let llty_ptr = llty.ptr_to();
     let Result { bcx, val } = malloc_raw_dyn(bcx, llty_ptr, box_ty, size, align);
     // Unique boxes do not allocate for zero-size types. The standard library
@@ -1870,7 +1869,7 @@ fn float_cast(bcx: Block,
     } else { llsrc };
 }
 
-#[deriving(PartialEq)]
+#[deriving(PartialEq, Show)]
 pub enum cast_kind {
     cast_pointer,
     cast_integral,
@@ -1982,7 +1981,7 @@ fn trans_imm_cast<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
                 cast_float => SIToFP(bcx, lldiscrim_a, ll_t_out),
                 _ => {
                     ccx.sess().bug(format!("translating unsupported cast: \
-                                            {} ({:?}) -> {} ({:?})",
+                                            {} ({}) -> {} ({})",
                                             t_in.repr(bcx.tcx()),
                                             k_in,
                                             t_out.repr(bcx.tcx()),
@@ -1991,7 +1990,7 @@ fn trans_imm_cast<'blk, 'tcx>(bcx: Block<'blk, 'tcx>,
             }
         }
         _ => ccx.sess().bug(format!("translating unsupported cast: \
-                                    {} ({:?}) -> {} ({:?})",
+                                    {} ({}) -> {} ({})",
                                     t_in.repr(bcx.tcx()),
                                     k_in,
                                     t_out.repr(bcx.tcx()),

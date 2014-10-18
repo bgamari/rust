@@ -77,10 +77,12 @@ pub fn collect_item_types(ccx: &CrateCtxt) {
     }
 
     match ccx.tcx.lang_items.ty_desc() {
-        Some(id) => { collect_intrinsic_type(ccx, id); } None => {}
+        Some(id) => { collect_intrinsic_type(ccx, id); }
+        None => {}
     }
     match ccx.tcx.lang_items.opaque() {
-        Some(id) => { collect_intrinsic_type(ccx, id); } None => {}
+        Some(id) => { collect_intrinsic_type(ccx, id); }
+        None => {}
     }
 
     let mut visitor = CollectTraitDefVisitor{ ccx: ccx };
@@ -169,7 +171,7 @@ impl<'a, 'tcx> AstConv<'tcx> for CrateCtxt<'a, 'tcx> {
             }
             x => {
                 self.tcx.sess.bug(format!("unexpected sort of node \
-                                           in get_item_ty(): {:?}",
+                                           in get_item_ty(): {}",
                                           x).as_slice());
             }
         }
@@ -306,10 +308,7 @@ fn collect_trait_methods(ccx: &CrateCtxt,
                                     }
                                 });
 
-                                if ty_method.explicit_self ==
-                                        ty::StaticExplicitSelfCategory {
-                                    make_static_method_ty(ccx, &*ty_method);
-                                }
+                                make_method_ty(ccx, &*ty_method);
 
                                 tcx.impl_or_trait_items
                                    .borrow_mut()
@@ -364,7 +363,7 @@ fn collect_trait_methods(ccx: &CrateCtxt,
         _ => { /* Ignore things that aren't traits */ }
     }
 
-    fn make_static_method_ty(ccx: &CrateCtxt, m: &ty::Method) {
+    fn make_method_ty(ccx: &CrateCtxt, m: &ty::Method) {
         ccx.tcx.tcache.borrow_mut().insert(
             m.def_id,
             Polytype {
@@ -1235,15 +1234,6 @@ pub fn convert(ccx: &CrateCtxt, it: &ast::Item) {
 
             tcx.tcache.borrow_mut().insert(local_def(it.id), pty.clone());
 
-            // Write the super-struct type, if it exists.
-            match struct_def.super_struct {
-                Some(ref ty) => {
-                    let supserty = ccx.to_ty(&ExplicitRscope, &**ty);
-                    write_ty_to_tcx(tcx, it.id, supserty);
-                },
-                _ => {},
-            }
-
             convert_struct(ccx, &**struct_def, pty, it.id);
         },
         ast::ItemTy(_, ref generics) => {
@@ -1294,39 +1284,6 @@ pub fn convert_struct(ccx: &CrateCtxt,
     }).collect();
 
     tcx.struct_fields.borrow_mut().insert(local_def(id), Rc::new(field_tys));
-
-    let super_struct = match struct_def.super_struct {
-        Some(ref t) => match t.node {
-            ast::TyPath(_, _, path_id) => {
-                let def_map = tcx.def_map.borrow();
-                match def_map.find(&path_id) {
-                    Some(&def::DefStruct(def_id)) => {
-                        // FIXME(#12511) Check for cycles in the inheritance hierarchy.
-                        // Check super-struct is virtual.
-                        match tcx.map.find(def_id.node) {
-                            Some(ast_map::NodeItem(i)) => match i.node {
-                                ast::ItemStruct(ref struct_def, _) => {
-                                    if !struct_def.is_virtual {
-                                        span_err!(tcx.sess, t.span, E0126,
-                                                  "struct inheritance is only \
-                                                   allowed from virtual structs");
-                                    }
-                                },
-                                _ => {},
-                            },
-                            _ => {},
-                        }
-
-                        Some(def_id)
-                    },
-                    _ => None,
-                }
-            }
-            _ => None,
-        },
-        None => None,
-    };
-    tcx.superstructs.borrow_mut().insert(local_def(id), super_struct);
 
     let substs = mk_item_substs(ccx, &pty.generics);
     let selfty = ty::mk_struct(tcx, local_def(id), substs);
@@ -1464,7 +1421,7 @@ pub fn trait_def_of_item(ccx: &CrateCtxt, it: &ast::Item) -> Rc<ty::TraitDef> {
         ref s => {
             tcx.sess.span_bug(
                 it.span,
-                format!("trait_def_of_item invoked on {:?}", s).as_slice());
+                format!("trait_def_of_item invoked on {}", s).as_slice());
         }
     };
 
@@ -1550,7 +1507,7 @@ pub fn ty_of_item(ccx: &CrateCtxt, it: &ast::Item)
         _ => {}
     }
     match it.node {
-        ast::ItemStatic(ref t, _, _) => {
+        ast::ItemStatic(ref t, _, _) | ast::ItemConst(ref t, _) => {
             let typ = ccx.to_ty(&ExplicitRscope, &**t);
             let pty = no_params(typ);
 

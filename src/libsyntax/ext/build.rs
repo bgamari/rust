@@ -147,6 +147,8 @@ pub trait AstBuilder {
     fn expr_some(&self, sp: Span, expr: P<ast::Expr>) -> P<ast::Expr>;
     fn expr_none(&self, sp: Span) -> P<ast::Expr>;
 
+    fn expr_break(&self, sp: Span) -> P<ast::Expr>;
+
     fn expr_tuple(&self, sp: Span, exprs: Vec<P<ast::Expr>>) -> P<ast::Expr>;
 
     fn expr_fail(&self, span: Span, msg: InternedString) -> P<ast::Expr>;
@@ -247,6 +249,13 @@ pub trait AstBuilder {
                    name: Ident,
                    ty: P<ast::Ty>,
                    mutbl: ast::Mutability,
+                   expr: P<ast::Expr>)
+                   -> P<ast::Item>;
+
+    fn item_const(&self,
+                   span: Span,
+                   name: Ident,
+                   ty: P<ast::Ty>,
                    expr: P<ast::Expr>)
                    -> P<ast::Item>;
 
@@ -681,6 +690,12 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
         self.expr_path(none)
     }
 
+
+    fn expr_break(&self, sp: Span) -> P<ast::Expr> {
+        self.expr(sp, ast::ExprBreak(None))
+    }
+
+
     fn expr_tuple(&self, sp: Span, exprs: Vec<P<ast::Expr>>) -> P<ast::Expr> {
         self.expr(sp, ast::ExprTup(exprs))
     }
@@ -1031,6 +1046,15 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
                    expr: P<ast::Expr>)
                    -> P<ast::Item> {
         self.item(span, name, Vec::new(), ast::ItemStatic(ty, mutbl, expr))
+    }
+
+    fn item_const(&self,
+                  span: Span,
+                  name: Ident,
+                  ty: P<ast::Ty>,
+                  expr: P<ast::Expr>)
+                  -> P<ast::Item> {
+        self.item(span, name, Vec::new(), ast::ItemConst(ty, expr))
     }
 
     fn item_ty_poly(&self, span: Span, name: Ident, ty: P<ast::Ty>,

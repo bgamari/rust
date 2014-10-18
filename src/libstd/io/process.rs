@@ -32,16 +32,16 @@ use std::hash::sip::SipState;
 
 /// Signal a process to exit, without forcibly killing it. Corresponds to
 /// SIGTERM on unix platforms.
-#[cfg(windows)] pub static PleaseExitSignal: int = 15;
+#[cfg(windows)] pub const PleaseExitSignal: int = 15;
 /// Signal a process to exit immediately, forcibly killing it. Corresponds to
 /// SIGKILL on unix platforms.
-#[cfg(windows)] pub static MustDieSignal: int = 9;
+#[cfg(windows)] pub const MustDieSignal: int = 9;
 /// Signal a process to exit, without forcibly killing it. Corresponds to
 /// SIGTERM on unix platforms.
-#[cfg(not(windows))] pub static PleaseExitSignal: int = libc::SIGTERM as int;
+#[cfg(not(windows))] pub const PleaseExitSignal: int = libc::SIGTERM as int;
 /// Signal a process to exit immediately, forcibly killing it. Corresponds to
 /// SIGKILL on unix platforms.
-#[cfg(not(windows))] pub static MustDieSignal: int = libc::SIGKILL as int;
+#[cfg(not(windows))] pub const MustDieSignal: int = libc::SIGKILL as int;
 
 /// Representation of a running or exited child process.
 ///
@@ -727,7 +727,7 @@ mod tests {
         assert!(p.is_ok());
         let mut p = p.unwrap();
         assert!(p.stdout.is_some());
-        let ret = read_all(p.stdout.get_mut_ref() as &mut Reader);
+        let ret = read_all(p.stdout.as_mut().unwrap() as &mut Reader);
         assert!(p.wait().unwrap().success());
         return ret;
     }
@@ -758,9 +758,9 @@ mod tests {
                             .stdin(CreatePipe(true, false))
                             .stdout(CreatePipe(false, true))
                             .spawn().unwrap();
-        p.stdin.get_mut_ref().write("foobar".as_bytes()).unwrap();
+        p.stdin.as_mut().unwrap().write("foobar".as_bytes()).unwrap();
         drop(p.stdin.take());
-        let out = read_all(p.stdout.get_mut_ref() as &mut Reader);
+        let out = read_all(p.stdout.as_mut().unwrap() as &mut Reader);
         assert!(p.wait().unwrap().success());
         assert_eq!(out, "foobar\n".to_string());
     }
@@ -1019,7 +1019,7 @@ mod tests {
     fn test_add_to_env() {
         let prog = env_cmd().env("RUN_TEST_NEW_ENV", "123").spawn().unwrap();
         let result = prog.wait_with_output().unwrap();
-        let output = str::from_utf8_lossy(result.output.as_slice()).into_string();
+        let output = String::from_utf8_lossy(result.output.as_slice()).into_string();
 
         assert!(output.as_slice().contains("RUN_TEST_NEW_ENV=123"),
                 "didn't find RUN_TEST_NEW_ENV inside of:\n\n{}", output);

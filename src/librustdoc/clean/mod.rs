@@ -300,6 +300,7 @@ pub enum ItemEnum {
     ModuleItem(Module),
     TypedefItem(Typedef),
     StaticItem(Static),
+    ConstantItem(Constant),
     TraitItem(Trait),
     ImplItem(Impl),
     /// `use` and `extern crate`
@@ -347,6 +348,7 @@ impl Clean<Item> for doctree::Module {
             self.mods.clean(cx),
             self.typedefs.clean(cx),
             self.statics.clean(cx),
+            self.constants.clean(cx),
             self.traits.clean(cx),
             self.impls.clean(cx),
             self.view_items.clean(cx).into_iter()
@@ -1249,7 +1251,7 @@ impl Clean<Type> for ast::Ty {
             TyBareFn(ref barefn) => BareFunction(box barefn.clean(cx)),
             TyParen(ref ty) => ty.clean(cx),
             TyBot => Bottom,
-            ref x => fail!("Unimplemented type {:?}", x),
+            ref x => fail!("Unimplemented type {}", x),
         }
     }
 }
@@ -1573,7 +1575,7 @@ impl Clean<VariantKind> for ast::VariantKind {
     }
 }
 
-#[deriving(Clone, Encodable, Decodable)]
+#[deriving(Clone, Encodable, Decodable, Show)]
 pub struct Span {
     pub filename: String,
     pub loline: uint,
@@ -1712,7 +1714,7 @@ impl Clean<BareFunctionDecl> for ast::BareFnTy {
     }
 }
 
-#[deriving(Clone, Encodable, Decodable)]
+#[deriving(Clone, Encodable, Decodable, Show)]
 pub struct Static {
     pub type_: Type,
     pub mutability: Mutability,
@@ -1724,7 +1726,7 @@ pub struct Static {
 
 impl Clean<Item> for doctree::Static {
     fn clean(&self, cx: &DocContext) -> Item {
-        debug!("claning static {}: {:?}", self.name.clean(cx), self);
+        debug!("claning static {}: {}", self.name.clean(cx), self);
         Item {
             name: Some(self.name.clean(cx)),
             attrs: self.attrs.clean(cx),
@@ -1735,6 +1737,29 @@ impl Clean<Item> for doctree::Static {
             inner: StaticItem(Static {
                 type_: self.type_.clean(cx),
                 mutability: self.mutability.clean(cx),
+                expr: self.expr.span.to_src(cx),
+            }),
+        }
+    }
+}
+
+#[deriving(Clone, Encodable, Decodable)]
+pub struct Constant {
+    pub type_: Type,
+    pub expr: String,
+}
+
+impl Clean<Item> for doctree::Constant {
+    fn clean(&self, cx: &DocContext) -> Item {
+        Item {
+            name: Some(self.name.clean(cx)),
+            attrs: self.attrs.clean(cx),
+            source: self.whence.clean(cx),
+            def_id: ast_util::local_def(self.id),
+            visibility: self.vis.clean(cx),
+            stability: self.stab.clean(cx),
+            inner: ConstantItem(Constant {
+                type_: self.type_.clean(cx),
                 expr: self.expr.span.to_src(cx),
             }),
         }
@@ -1979,7 +2004,7 @@ trait ToSource {
 
 impl ToSource for syntax::codemap::Span {
     fn to_src(&self, cx: &DocContext) -> String {
-        debug!("converting span {:?} to snippet", self.clean(cx));
+        debug!("converting span {} to snippet", self.clean(cx));
         let sn = match cx.sess().codemap().span_to_snippet(*self) {
             Some(x) => x.to_string(),
             None    => "".to_string()
@@ -1992,7 +2017,7 @@ impl ToSource for syntax::codemap::Span {
 fn lit_to_string(lit: &ast::Lit) -> String {
     match lit.node {
         ast::LitStr(ref st, _) => st.get().to_string(),
-        ast::LitBinary(ref data) => format!("{:?}", data.as_slice()),
+        ast::LitBinary(ref data) => format!("{}", data),
         ast::LitByte(b) => {
             let mut res = String::from_str("b'");
             (b as char).escape_default(|c| {
@@ -2012,7 +2037,7 @@ fn lit_to_string(lit: &ast::Lit) -> String {
 
 fn name_from_pat(p: &ast::Pat) -> String {
     use syntax::ast::*;
-    debug!("Trying to get a name from pattern: {:?}", p);
+    debug!("Trying to get a name from pattern: {}", p);
 
     match p.node {
         PatWild(PatWildSingle) => "_".to_string(),
@@ -2057,7 +2082,7 @@ fn resolve_type(cx: &DocContext, path: Path,
         // If we're extracting tests, this return value doesn't matter.
         None => return Primitive(Bool),
     };
-    debug!("searching for {:?} in defmap", id);
+    debug!("searching for {} in defmap", id);
     let def = match tcx.def_map.borrow().find(&id) {
         Some(&k) => k,
         None => fail!("unresolved id not in defmap")

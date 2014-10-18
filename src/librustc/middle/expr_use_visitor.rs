@@ -73,7 +73,7 @@ pub trait Delegate {
               mode: MutateMode);
 }
 
-#[deriving(PartialEq)]
+#[deriving(PartialEq, Show)]
 pub enum LoanCause {
     ClosureCapture(Span),
     AddrOf,
@@ -85,7 +85,7 @@ pub enum LoanCause {
     MatchDiscriminant
 }
 
-#[deriving(PartialEq,Show)]
+#[deriving(PartialEq, Show)]
 pub enum ConsumeMode {
     Copy,                // reference to x where x has a type that copies
     Move(MoveReason),    // reference to x where x has a type that moves
@@ -267,7 +267,7 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,TYPER> {
         }
     }
 
-    fn consume_expr(&mut self, expr: &ast::Expr) {
+    pub fn consume_expr(&mut self, expr: &ast::Expr) {
         debug!("consume_expr(expr={})", expr.repr(self.tcx()));
 
         let cmt = return_if_err!(self.mc.cat_expr(expr));
@@ -427,6 +427,10 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,TYPER> {
             ast::ExprWhile(ref cond_expr, ref blk, _) => {
                 self.consume_expr(&**cond_expr);
                 self.walk_block(&**blk);
+            }
+
+            ast::ExprWhileLet(..) => {
+                self.tcx().sess.span_bug(expr.span, "non-desugared ExprWhileLet");
             }
 
             ast::ExprForLoop(ref pat, ref head, ref blk, _) => {
@@ -621,7 +625,7 @@ impl<'d,'t,'tcx,TYPER:mc::Typer<'tcx>> ExprUseVisitor<'d,'t,TYPER> {
          * meaning either copied or moved depending on its type.
          */
 
-        debug!("walk_block(blk.id={:?})", blk.id);
+        debug!("walk_block(blk.id={})", blk.id);
 
         for stmt in blk.stmts.iter() {
             self.walk_stmt(&**stmt);

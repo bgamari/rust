@@ -202,7 +202,7 @@ use middle::ty;
 use middle::pat_util;
 use util::ppaux;
 
-use libc::{c_uint, c_ulonglong, c_longlong};
+use libc::c_uint;
 use std::c_str::{CString, ToCStr};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -242,13 +242,12 @@ static UNKNOWN_FILE_METADATA: DIFile = (0 as DIFile);
 static UNKNOWN_SCOPE_METADATA: DIScope = (0 as DIScope);
 
 static FLAGS_NONE: c_uint = 0;
-static FLAGS_ARTIFICAL: c_uint = llvm::debuginfo::FlagArtificial as c_uint;
 
 //=-----------------------------------------------------------------------------
 //  Public Interface of debuginfo module
 //=-----------------------------------------------------------------------------
 
-#[deriving(Copy, Show, Hash, Eq, PartialEq, Clone)]
+#[deriving(Show, Hash, Eq, PartialEq, Clone)]
 struct UniqueTypeId(ast::Name);
 
 // The TypeMap is where the CrateDebugContext holds the type metadata nodes
@@ -469,7 +468,7 @@ impl TypeMap {
                                                         &mut unique_type_id);
             },
             _ => {
-                cx.sess().bug(format!("get_unique_type_id_of_type() - unexpected type: {}, {:?}",
+                cx.sess().bug(format!("get_unique_type_id_of_type() - unexpected type: {}, {}",
                                       ppaux::ty_to_string(cx.tcx(), type_).as_slice(),
                                       ty::get(type_).sty).as_slice())
             }
@@ -777,20 +776,21 @@ pub fn create_global_var_metadata(cx: &CrateContext,
         ast_map::NodeItem(item) => {
             match item.node {
                 ast::ItemStatic(..) => (item.ident, item.span),
+                ast::ItemConst(..) => (item.ident, item.span),
                 _ => {
                     cx.sess()
                       .span_bug(item.span,
                                 format!("debuginfo::\
                                          create_global_var_metadata() -
                                          Captured var-id refers to \
-                                         unexpected ast_item variant: {:?}",
+                                         unexpected ast_item variant: {}",
                                         var_item).as_slice())
                 }
             }
         },
         _ => cx.sess().bug(format!("debuginfo::create_global_var_metadata() \
                                     - Captured var-id refers to unexpected \
-                                    ast_map variant: {:?}",
+                                    ast_map variant: {}",
                                    var_item).as_slice())
     };
 
@@ -846,7 +846,7 @@ pub fn create_local_var_metadata(bcx: Block, local: &ast::Local) {
             Some(datum) => datum,
             None => {
                 bcx.sess().span_bug(span,
-                    format!("no entry in lllocals table for {:?}",
+                    format!("no entry in lllocals table for {}",
                             node_id).as_slice());
             }
         };
@@ -896,7 +896,7 @@ pub fn create_captured_var_metadata(bcx: Block,
                                 format!(
                                 "debuginfo::create_captured_var_metadata() - \
                                  Captured var-id refers to unexpected \
-                                 ast_map variant: {:?}",
+                                 ast_map variant: {}",
                                  ast_item).as_slice());
                 }
             }
@@ -906,7 +906,7 @@ pub fn create_captured_var_metadata(bcx: Block,
               .span_bug(span,
                         format!("debuginfo::create_captured_var_metadata() - \
                                  Captured var-id refers to unexpected \
-                                 ast_map variant: {:?}",
+                                 ast_map variant: {}",
                                 ast_item).as_slice());
         }
     };
@@ -1009,7 +1009,7 @@ pub fn create_argument_metadata(bcx: Block, arg: &ast::Arg) {
             Some(v) => v,
             None => {
                 bcx.sess().span_bug(span,
-                    format!("no entry in lllocals table for {:?}",
+                    format!("no entry in lllocals table for {}",
                             node_id).as_slice());
             }
         };
@@ -1250,7 +1250,7 @@ pub fn create_function_debug_context(cx: &CrateContext,
                 _ => {
                     cx.sess()
                       .bug(format!("create_function_debug_context: \
-                                    unexpected sort of node: {:?}",
+                                    unexpected sort of node: {}",
                                     fnitem).as_slice())
                 }
             }
@@ -1261,7 +1261,7 @@ pub fn create_function_debug_context(cx: &CrateContext,
             return FunctionDebugContext { repr: FunctionWithoutDebugInfo };
         }
         _ => cx.sess().bug(format!("create_function_debug_context: \
-                                    unexpected sort of node: {:?}",
+                                    unexpected sort of node: {}",
                                    fnitem).as_slice())
     };
 
@@ -1542,7 +1542,7 @@ fn compile_unit_metadata(cx: &CrateContext) {
         }
     };
 
-    debug!("compile_unit_metadata: {:?}", compile_unit_name);
+    debug!("compile_unit_metadata: {}", compile_unit_name);
     let producer = format!("rustc version {}",
                            (option_env!("CFG_VERSION")).expect("CFG_VERSION"));
 
@@ -1703,7 +1703,7 @@ fn scope_metadata(fcx: &FunctionContext,
             let node = fcx.ccx.tcx().map.get(node_id);
 
             fcx.ccx.sess().span_bug(error_reporting_span,
-                format!("debuginfo: Could not find scope info for node {:?}",
+                format!("debuginfo: Could not find scope info for node {}",
                         node).as_slice());
         }
     }
@@ -1711,7 +1711,7 @@ fn scope_metadata(fcx: &FunctionContext,
 
 fn basic_type_metadata(cx: &CrateContext, t: ty::t) -> DIType {
 
-    debug!("basic_type_metadata: {:?}", ty::get(t));
+    debug!("basic_type_metadata: {}", ty::get(t));
 
     let (name, encoding) = match ty::get(t).sty {
         ty::ty_nil => ("()".to_string(), DW_ATE_unsigned),
@@ -2276,11 +2276,7 @@ impl VariantMemberDescriptionFactory {
                     _ => type_metadata(cx, ty, self.span)
                 },
                 offset: ComputedMemberOffset,
-                flags: if self.discriminant_type_metadata.is_some() &&  i == 0 {
-                    FLAGS_ARTIFICAL
-                } else {
-                    FLAGS_NONE
-                }
+                flags: FLAGS_NONE
             }
         }).collect()
     }
@@ -2339,9 +2335,9 @@ fn describe_enum_variant(cx: &CrateContext,
         None => variant_info.args.iter().map(|_| "".to_string()).collect()
     };
 
-    // If this is not a univariant enum, there is also the (unnamed) discriminant field.
+    // If this is not a univariant enum, there is also the discriminant field.
     match discriminant_info {
-        RegularDiscriminant(_) => arg_names.insert(0, "".to_string()),
+        RegularDiscriminant(_) => arg_names.insert(0, "RUST$ENUM$DISR".to_string()),
         _ => { /* do nothing */ }
     };
 
@@ -2388,7 +2384,7 @@ fn prepare_enum_metadata(cx: &CrateContext,
                     llvm::LLVMDIBuilderCreateEnumerator(
                         DIB(cx),
                         name,
-                        v.disr_val as c_ulonglong)
+                        v.disr_val as u64)
                 }
             })
         })
@@ -2667,9 +2663,9 @@ fn fixed_vec_metadata(cx: &CrateContext,
 
     let subrange = unsafe {
         llvm::LLVMDIBuilderGetOrCreateSubrange(
-        DIB(cx),
-        0,
-        len as c_longlong)
+            DIB(cx),
+            0,
+            len as i64)
     };
 
     let subscripts = create_DIArray(DIB(cx), [subrange]);
@@ -2713,14 +2709,14 @@ fn vec_slice_metadata(cx: &CrateContext,
             llvm_type: *member_llvm_types.get(0),
             type_metadata: element_type_metadata,
             offset: ComputedMemberOffset,
-            flags: FLAGS_ARTIFICAL
+            flags: FLAGS_NONE
         },
         MemberDescription {
             name: "length".to_string(),
             llvm_type: *member_llvm_types.get(1),
             type_metadata: type_metadata(cx, ty::mk_uint(), span),
             offset: ComputedMemberOffset,
-            flags: FLAGS_ARTIFICAL
+            flags: FLAGS_NONE
         },
     ];
 
@@ -2859,7 +2855,7 @@ fn type_metadata(cx: &CrateContext,
         }
     };
 
-    debug!("type_metadata: {:?}", ty::get(t));
+    debug!("type_metadata: {}", ty::get(t));
 
     let sty = &ty::get(t).sty;
     let MetadataCreationResult { metadata, already_stored_in_typemap } = match *sty {
@@ -2941,7 +2937,7 @@ fn type_metadata(cx: &CrateContext,
                                    usage_site_span).finalize(cx)
         }
         _ => {
-            cx.sess().bug(format!("debuginfo: unexpected type in type_metadata: {:?}",
+            cx.sess().bug(format!("debuginfo: unexpected type in type_metadata: {}",
                                   sty).as_slice())
         }
     };
@@ -3076,11 +3072,11 @@ fn span_start(cx: &CrateContext, span: Span) -> codemap::Loc {
 }
 
 fn size_and_align_of(cx: &CrateContext, llvm_type: Type) -> (u64, u64) {
-    (machine::llsize_of_alloc(cx, llvm_type), machine::llalign_of_min(cx, llvm_type))
+    (machine::llsize_of_alloc(cx, llvm_type), machine::llalign_of_min(cx, llvm_type) as u64)
 }
 
-fn bytes_to_bits(bytes: u64) -> c_ulonglong {
-    (bytes * 8) as c_ulonglong
+fn bytes_to_bits(bytes: u64) -> u64 {
+    bytes * 8
 }
 
 #[inline]
@@ -3498,6 +3494,11 @@ fn populate_scope_map(cx: &CrateContext,
                                |cx, scope_stack, scope_map| {
                     walk_block(cx, &**loop_body, scope_stack, scope_map);
                 })
+            }
+
+            ast::ExprWhileLet(..) => {
+                cx.sess().span_bug(exp.span, "debuginfo::populate_scope_map() - \
+                                              Found unexpanded while-let.");
             }
 
             ast::ExprForLoop(ref pattern, ref head, ref body, _) => {
@@ -3990,7 +3991,7 @@ fn namespace_for_item(cx: &CrateContext, def_id: ast::DefId) -> Rc<NamespaceTree
             Some(node) => node,
             None => {
                 cx.sess().bug(format!("debuginfo::namespace_for_item(): \
-                                       path too short for {:?}",
+                                       path too short for {}",
                                       def_id).as_slice());
             }
         }

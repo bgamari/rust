@@ -1496,73 +1496,42 @@ low-level details matter, they really matter. Just remember that `String`s
 allocate memory and control their data, while `&str`s are a reference to
 another string, and you'll be all set.
 
-# Vectors
+# Arrays, Vectors, and Slices
 
-Like many programming languages, Rust has a list type for when you want a list
-of things. But similar to strings, Rust has different types to represent this
-idea: `Vec<T>` (a 'vector'), `[T, .. N]` (an 'array'), and `&[T]` (a 'slice').
-Whew!
-
-Vectors are similar to `String`s: they have a dynamic length, and they
-allocate enough memory to fit. You can create a vector with the `vec!` macro:
+Like many programming languages, Rust has list types to represent a sequence of
+things. The most basic is the **array**, a fixed-size list of elements of the
+same type. By default, arrays are immutable.
 
 ```{rust}
-let nums = vec![1i, 2i, 3i];
+let a = [1i, 2i, 3i];
+let mut m = [1i, 2i, 3i];
 ```
 
-Notice that unlike the `println!` macro we've used in the past, we use square
-brackets (`[]`) with `vec!`. Rust allows you to use either in either situation,
-this is just convention.
-
-You can create an array with just square brackets:
+You can create an array with a given number of elements, all initialized to the
+same value, with `[val, ..N]` syntax. The compiler ensures that arrays are
+always initialized.
 
 ```{rust}
-let nums = [1i, 2i, 3i];
-let nums = [1i, ..20]; // Shorthand for an array of 20 elements all initialized to 1
+let a = [0i, ..20];  // Shorthand for array of 20 elements all initialized to 0
 ```
 
-So what's the difference? An array has a fixed size, so you can't add or
-subtract elements:
+Arrays have type `[T,..N]`. We'll talk about this `T` notation later, when we
+cover generics.
 
-```{rust,ignore}
-let mut nums = vec![1i, 2i, 3i];
-nums.push(4i); // works
-
-let mut nums = [1i, 2i, 3i];
-nums.push(4i); //  error: type `[int, .. 3]` does not implement any method
-               // in scope named `push`
-```
-
-The `push()` method lets you append a value to the end of the vector. But
-since arrays have fixed sizes, adding an element doesn't make any sense.
-You can see how it has the exact type in the error message: `[int, .. 3]`.
-An array of `int`s, with length 3.
-
-Similar to `&str`, a slice is a reference to another array. We can get a
-slice from a vector by using the `as_slice()` method:
+You can get the number of elements in an array `a` with `a.len()`, and use
+`a.iter()` to iterate over them with a for loop. This code will print each
+number in order:
 
 ```{rust}
-let vec = vec![1i, 2i, 3i];
-let slice = vec.as_slice();
-```
+let a = [1i, 2, 3];     // Only the first item needs a type suffix
 
-All three types implement an `iter()` method, which returns an iterator. We'll
-talk more about the details of iterators later, but for now, the `iter()` method
-allows you to write a `for` loop that prints out the contents of a vector, array,
-or slice:
-
-```{rust}
-let vec = vec![1i, 2i, 3i];
-
-for i in vec.iter() {
-    println!("{}", i);
+println!("a has {} elements", a.len());
+for e in a.iter() {
+    println!("{}", e);
 }
 ```
 
-This code will print each number in order, on its own line.
-
-You can access a particular element of a vector, array, or slice by using
-**subscript notation**:
+You can access a particular element of an array with **subscript notation**:
 
 ```{rust}
 let names = ["Graydon", "Brian", "Niko"];
@@ -1570,13 +1539,59 @@ let names = ["Graydon", "Brian", "Niko"];
 println!("The second name is: {}", names[1]);
 ```
 
-These subscripts start at zero, like in most programming languages, so the
-first name is `names[0]` and the second name is `names[1]`. The above example
-prints `The second name is: Brian`.
+Subscripts start at zero, like in most programming languages, so the first name
+is `names[0]` and the second name is `names[1]`. The above example prints
+`The second name is: Brian`. If you try to use a subscript that is not in the
+array, you will get an error: array access is bounds-checked at run-time. Such
+errant access is the source of many bugs in other systems programming
+languages.
 
-There's a whole lot more to vectors, but that's enough to get started. We have
-now learned all of the most basic Rust concepts. We're ready to start building
-our guessing game, but we need to know how to do one last thing first: get
+A **vector** is a dynamic or "growable" array, implemented as the standard
+library type [`Vec<T>`](std/vec/) (we'll talk about what the `<T>` means
+later). Vectors are to arrays what `String` is to `&str`. You can create them
+with the `vec!` macro:
+
+```{rust}
+let v = vec![1i, 2, 3];
+```
+
+(Notice that unlike the `println!` macro we've used in the past, we use square
+brackets `[]` with `vec!`. Rust allows you to use either in either situation,
+this is just convention.)
+
+You can get the length of, iterate over, and subscript vectors just like
+arrays. In addition, (mutable) vectors can grow automatically:
+
+```{rust}
+let mut nums = vec![1i, 2, 3];
+nums.push(4);
+println!("The length of nums is now {}", nums.len());   // Prints 4
+```
+
+Vectors have many more useful methods.
+
+A **slice** is a reference to (or "view" into) an array. They are useful for
+allowing safe, efficient access to a portion of an array without copying. For
+example, you might want to reference just one line of a file read into memory.
+By nature, a slice is not created directly, but from an existing variable.
+Slices have a length, can be mutable or not, and in many ways behave like
+arrays:
+
+```{rust}
+let a = [0i, 1, 2, 3, 4];
+let middle = a.slice(1, 4);     // A slice of a: just the elements [1,2,3]
+
+for e in middle.iter() {
+    println!("{}", e);          // Prints 1, 2, 3
+}
+```
+
+You can also take a slice of a vector, `String`, or `&str`, because they are
+backed by arrays. Slices have type `&[T]`, which we'll talk about when we cover
+generics.
+
+We have now learned all of the most basic Rust concepts. We're ready to start
+building our guessing game, we just need to know one last thing: how to get
 input from the keyboard. You can't have a guessing game without the ability to
 guess!
 
@@ -1746,8 +1761,7 @@ For our first project, we'll implement a classic beginner programming problem:
 the guessing game. Here's how it works: Our program will generate a random
 integer between one and a hundred. It will then prompt us to enter a guess.
 Upon entering our guess, it will tell us if we're too low or too high. Once we
-guess correctly, it will congratulate us, and print the number of guesses we've
-taken to the screen. Sound good?
+guess correctly, it will congratulate us. Sound good?
 
 ## Set up
 
@@ -3538,9 +3552,8 @@ restriction:
 
 1. If the borrow is immutable, you may read the data the pointer points to.
 2. If the borrow is mutable, you may read and write the data the pointer points to.
-3. You may lend the pointer to someone else in an immutable fashion, **BUT**
-4. When you do so, they must return it to you before you must give your own
-   borrow back.
+3. You may lend the pointer to someone else, **BUT**
+4. When you do so, they must return it before you can give your own borrow back.
 
 This last requirement can seem odd, but it also makes sense. If you have to
 return something, and you've lent it to someone, they need to give it back to
@@ -5062,8 +5075,8 @@ println!("The value of x[0] is: {}", x[0]); // error: use of moved value: `x`
 ```
 
 `x` is now owned by the proc, and so we can't use it anymore. Many other
-languages would let us do this, but it's not safe to do so. Rust's type system
-catches the error.
+languages would let us do this, but it's not safe to do so. Rust's borrow
+checker catches the error.
 
 If tasks were only able to capture these values, they wouldn't be very useful.
 Luckily, tasks can communicate with each other through **channel**s. Channels
@@ -5212,8 +5225,8 @@ We can check this out using a special flag to `rustc`. This code, in a file
 
 ```{rust}
 fn main() {
-    let x = "Hello";
-    println!("x is: {:s}", x);
+    let x = 5i;
+    println!("x is: {}", x);
 }
 ```
 
@@ -5225,32 +5238,19 @@ give us this huge result:
 #![no_std]
 #![feature(globs)]
 #[phase(plugin, link)]
-extern crate std = "std";
-extern crate rt = "native";
+extern crate "std" as std;
+extern crate "native" as rt;
+#[prelude_import]
 use std::prelude::*;
 fn main() {
-    let x = "Hello";
+    let x = 5i;
     match (&x,) {
         (__arg0,) => {
             #[inline]
             #[allow(dead_code)]
-            static __STATIC_FMTSTR: [::std::fmt::rt::Piece<'static>, ..2u] =
-                [::std::fmt::rt::String("x is: "),
-                 ::std::fmt::rt::Argument(::std::fmt::rt::Argument{position:
-                                                                       ::std::fmt::rt::ArgumentNext,
-                                                                   format:
-                                                                       ::std::fmt::rt::FormatSpec{fill:
-                                                                                                      ' ',
-                                                                                                  align:
-                                                                                                      ::std::fmt::rt::AlignUnknown,
-                                                                                                  flags:
-                                                                                                      0u,
-                                                                                                  precision:
-                                                                                                      ::std::fmt::rt::CountImplied,
-                                                                                                  width:
-                                                                                                      ::std::fmt::rt::CountImplied,},})];
+            static __STATIC_FMTSTR: [&'static str, ..1u] = ["x is: "];
             let __args_vec =
-                &[::std::fmt::argument(::std::fmt::secret_string, __arg0)];
+                &[::std::fmt::argument(::std::fmt::secret_show, __arg0)];
             let __args =
                 unsafe {
                     ::std::fmt::Arguments::new(__STATIC_FMTSTR, __args_vec)
@@ -5261,45 +5261,16 @@ fn main() {
 }
 ```
 
-Intense. Here's a trimmed down version that's a bit easier to read:
-
-```{rust,ignore}
-fn main() {
-    let x = 5i;
-    match (&x,) {
-        (__arg0,) => {
-            static __STATIC_FMTSTR:  =
-                [String("x is: "),
-                 Argument(Argument {
-                    position: ArgumentNext,
-                    format: FormatSpec {
-                        fill: ' ',
-                        align: AlignUnknown,
-                        flags: 0u,
-                        precision: CountImplied,
-                        width: CountImplied,
-                    },
-                },
-               ];
-            let __args_vec = &[argument(secret_string, __arg0)];
-            let __args = unsafe { Arguments::new(__STATIC_FMTSTR, __args_vec) };
-
-            println_args(&__args)
-        }
-    };
-}
-```
-
 Whew! This isn't too terrible. You can see that we still `let x = 5i`,
 but then things get a little bit hairy. Three more bindings get set: a
 static format string, an argument vector, and the arguments. We then
 invoke the `println_args` function with the generated arguments.
 
-This is the code (well, the full version) that Rust actually compiles. You can
-see all of the extra information that's here. We get all of the type safety and
-options that it provides, but at compile time, and without needing to type all
-of this out. This is how macros are powerful. Without them, you would need to
-type all of this by hand to get a type checked `println`.
+This is the code that Rust actually compiles. You can see all of the extra
+information that's here. We get all of the type safety and options that it
+provides, but at compile time, and without needing to type all of this out.
+This is how macros are powerful. Without them, you would need to type all of
+this by hand to get a type checked `println`.
 
 For more on macros, please consult [the Macros Guide](guide-macros.html).
 Macros are a very advanced and still slightly experimental feature, but don't

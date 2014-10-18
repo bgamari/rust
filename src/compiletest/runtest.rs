@@ -626,6 +626,17 @@ fn run_debuginfo_lldb_test(config: &Config, props: &TestProps, testfile: &Path) 
 
     let exe_file = make_exe_name(config, testfile);
 
+    match config.lldb_version {
+        Some(ref version) => {
+            println!("NOTE: compiletest thinks it is using LLDB version {}",
+                     version.as_slice());
+        }
+        _ => {
+            println!("NOTE: compiletest does not know which version of \
+                      LLDB it is using");
+        }
+    }
+
     // Parse debugger commands etc from test files
     let DebuggerCommands {
         commands,
@@ -936,15 +947,12 @@ fn check_expected_errors(expected_errors: Vec<errors::ExpectedError> ,
         String::from_chars(c.as_slice())
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     fn prefix_matches( line : &str, prefix : &str ) -> bool {
         to_lower(line).as_slice().starts_with(to_lower(prefix).as_slice())
     }
 
-    #[cfg(target_os = "linux")]
-    #[cfg(target_os = "macos")]
-    #[cfg(target_os = "freebsd")]
-    #[cfg(target_os = "dragonfly")]
+    #[cfg(unix)]
     fn prefix_matches( line : &str, prefix : &str ) -> bool {
         line.starts_with( prefix )
     }
@@ -1345,24 +1353,21 @@ fn program_output(config: &Config, testfile: &Path, lib_path: &str, prog: String
 }
 
 // Linux and mac don't require adjusting the library search path
-#[cfg(target_os = "linux")]
-#[cfg(target_os = "macos")]
-#[cfg(target_os = "freebsd")]
-#[cfg(target_os = "dragonfly")]
+#[cfg(unix)]
 fn make_cmdline(_libpath: &str, prog: &str, args: &[String]) -> String {
     format!("{} {}", prog, args.connect(" "))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn make_cmdline(libpath: &str, prog: &str, args: &[String]) -> String {
-    format!("{} {} {}", lib_path_cmd_prefix(libpath), prog, args.connect(" "))
-}
 
-// Build the LD_LIBRARY_PATH variable as it would be seen on the command line
-// for diagnostic purposes
-#[cfg(target_os = "windows")]
-fn lib_path_cmd_prefix(path: &str) -> String {
-    format!("{}=\"{}\"", util::lib_path_env_var(), util::make_new_path(path))
+    // Build the LD_LIBRARY_PATH variable as it would be seen on the command line
+    // for diagnostic purposes
+    fn lib_path_cmd_prefix(path: &str) -> String {
+        format!("{}=\"{}\"", util::lib_path_env_var(), util::make_new_path(path))
+    }
+
+    format!("{} {} {}", lib_path_cmd_prefix(libpath), prog, args.connect(" "))
 }
 
 fn dump_output(config: &Config, testfile: &Path, out: &str, err: &str) {

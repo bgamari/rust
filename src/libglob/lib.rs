@@ -31,7 +31,7 @@
 #![license = "MIT/ASL2"]
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/master/",
+       html_root_url = "http://doc.rust-lang.org/nightly/",
        html_playground_url = "http://play.rust-lang.org/")]
 #![allow(deprecated)]
 
@@ -682,7 +682,7 @@ mod test {
     }
 
     #[test]
-    #[ignore(cfg(windows))] // FIXME (#9406)
+    #[cfg_attr(windows, ignore)] // FIXME (#9406)
     fn test_lots_of_files() {
         // this is a good test because it touches lots of differently named files
         glob("/*/*/*/*").skip(10000).next();

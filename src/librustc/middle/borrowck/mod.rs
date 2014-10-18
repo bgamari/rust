@@ -106,7 +106,8 @@ fn borrowck_item(this: &mut BorrowckCtxt, item: &ast::Item) {
     // loan step is intended for things that have a data
     // flow dependent conditions.
     match item.node {
-        ast::ItemStatic(_, _, ref ex) => {
+        ast::ItemStatic(_, _, ref ex) |
+        ast::ItemConst(_, ref ex) => {
             gather_loans::gather_loans_in_static_initializer(this, &**ex);
         }
         _ => {
@@ -263,14 +264,14 @@ impl Loan {
     }
 }
 
-#[deriving(PartialEq, Eq, Hash)]
+#[deriving(PartialEq, Eq, Hash, Show)]
 pub enum LoanPath {
     LpVar(ast::NodeId),               // `x` in doc.rs
     LpUpvar(ty::UpvarId),             // `x` captured by-value into closure
     LpExtend(Rc<LoanPath>, mc::MutabilityCategory, LoanPathElem)
 }
 
-#[deriving(PartialEq, Eq, Hash)]
+#[deriving(PartialEq, Eq, Hash, Show)]
 pub enum LoanPathElem {
     LpDeref(mc::PointerKind),    // `*LV` in doc.rs
     LpInterior(mc::InteriorKind) // `LV.f` in doc.rs
@@ -354,8 +355,7 @@ pub fn opt_loan_path(cmt: &mc::cmt) -> Option<Rc<LoanPath>> {
 
     match cmt.cat {
         mc::cat_rvalue(..) |
-        mc::cat_static_item |
-        mc::cat_copied_upvar(mc::CopiedUpvar { onceness: ast::Many, .. }) => {
+        mc::cat_static_item => {
             None
         }
 
@@ -363,12 +363,8 @@ pub fn opt_loan_path(cmt: &mc::cmt) -> Option<Rc<LoanPath>> {
             Some(Rc::new(LpVar(id)))
         }
 
-        mc::cat_upvar(ty::UpvarId {var_id: id, closure_expr_id: proc_id}, _) |
-        mc::cat_copied_upvar(mc::CopiedUpvar { upvar_id: id,
-                                               onceness: _,
-                                               capturing_proc: proc_id }) => {
-            let upvar_id = ty::UpvarId{ var_id: id, closure_expr_id: proc_id };
-            Some(Rc::new(LpUpvar(upvar_id)))
+        mc::cat_upvar(mc::Upvar { id, .. }) => {
+            Some(Rc::new(LpUpvar(id)))
         }
 
         mc::cat_deref(ref cmt_base, _, pk) => {
@@ -416,6 +412,7 @@ pub enum AliasableViolationKind {
     BorrowViolation(euv::LoanCause)
 }
 
+#[deriving(Show)]
 pub enum MovedValueUseKind {
     MovedInUse,
     MovedInCapture,
@@ -525,8 +522,8 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                         (ty::expr_ty_adjusted(self.tcx, &*expr), expr.span)
                     }
                     r => {
-                        self.tcx.sess.bug(format!("MoveExpr({:?}) maps to \
-                                                   {:?}, not Expr",
+                        self.tcx.sess.bug(format!("MoveExpr({}) maps to \
+                                                   {}, not Expr",
                                                   the_move.id,
                                                   r).as_slice())
                     }
@@ -561,8 +558,8 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                         (ty::expr_ty_adjusted(self.tcx, &*expr), expr.span)
                     }
                     r => {
-                        self.tcx.sess.bug(format!("Captured({:?}) maps to \
-                                                   {:?}, not Expr",
+                        self.tcx.sess.bug(format!("Captured({}) maps to \
+                                                   {}, not Expr",
                                                   the_move.id,
                                                   r).as_slice())
                     }
@@ -621,20 +618,29 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
         self.tcx.sess.span_end_note(s, m);
     }
 
+    pub fn span_help(&self, s: Span, m: &str) {
+        self.tcx.sess.span_help(s, m);
+    }
+
     pub fn bckerr_to_string(&self, err: &BckError) -> String {
         match err.code {
             err_mutbl => {
-                let descr = match opt_loan_path(&err.cmt) {
-                    None => {
-                        format!("{} {}",
-                                err.cmt.mutbl.to_user_str(),
-                                self.cmt_to_string(&*err.cmt))
+                let descr = match err.cmt.note {
+                    mc::NoteClosureEnv(_) => {
+                        self.cmt_to_string(&*err.cmt)
                     }
-                    Some(lp) => {
-                        format!("{} {} `{}`",
-                                err.cmt.mutbl.to_user_str(),
-                                self.cmt_to_string(&*err.cmt),
-                                self.loan_path_to_string(&*lp))
+                    _ => match opt_loan_path(&err.cmt) {
+                        None => {
+                            format!("{} {}",
+                                    err.cmt.mutbl.to_user_str(),
+                                    self.cmt_to_string(&*err.cmt))
+                        }
+                        Some(lp) => {
+                            format!("{} {} `{}`",
+                                    err.cmt.mutbl.to_user_str(),
+                                    self.cmt_to_string(&*err.cmt),
+                                    self.loan_path_to_string(&*lp))
+                        }
                     }
                 };
 
@@ -724,6 +730,13 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                     format!("{} in an aliasable location",
                              prefix).as_slice());
             }
+            mc::AliasableClosure(id) => {
+                self.tcx.sess.span_err(span,
+                                       format!("{} in a captured outer \
+                                               variable in an `Fn` closure", prefix).as_slice());
+                span_note!(self.tcx.sess, self.tcx.map.span(id),
+                           "consider changing this closure to take self by mutable reference");
+            }
             mc::AliasableStatic(..) |
             mc::AliasableStaticMut(..) => {
                 self.tcx.sess.span_err(
@@ -747,7 +760,17 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
     pub fn note_and_explain_bckerr(&self, err: BckError) {
         let code = err.code;
         match code {
-            err_mutbl(..) => { }
+            err_mutbl(..) => {
+                match err.cmt.note {
+                    mc::NoteClosureEnv(upvar_id) => {
+                        self.tcx.sess.span_note(
+                            self.tcx.map.span(upvar_id.closure_expr_id),
+                            "consider changing this closure to take \
+                             self by mutable reference");
+                    }
+                    _ => {}
+                }
+            }
 
             err_out_of_scope(super_scope, sub_scope) => {
                 note_and_explain_region(
@@ -880,7 +903,7 @@ impl DataFlowOperator for LoanDataFlowOperator {
 
 impl Repr for Loan {
     fn repr(&self, tcx: &ty::ctxt) -> String {
-        format!("Loan_{:?}({}, {:?}, {:?}-{:?}, {})",
+        format!("Loan_{}({}, {}, {}-{}, {})",
                  self.index,
                  self.loan_path.repr(tcx),
                  self.kind,

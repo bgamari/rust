@@ -215,7 +215,8 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
                     ast::ItemFn(..)
                     | ast::ItemEnum(..)
                     | ast::ItemTy(..)
-                    | ast::ItemStatic(..) => {
+                    | ast::ItemStatic(..)
+                    | ast::ItemConst(..) => {
                         visit::walk_item(self, &*item);
                     }
                     _ => ()
@@ -440,6 +441,7 @@ impl<'a, 'tcx> DeadVisitor<'a, 'tcx> {
     fn should_warn_about_item(&mut self, item: &ast::Item) -> bool {
         let should_warn = match item.node {
             ast::ItemStatic(..)
+            | ast::ItemConst(..)
             | ast::ItemFn(..)
             | ast::ItemEnum(..)
             | ast::ItemStruct(..) => true,

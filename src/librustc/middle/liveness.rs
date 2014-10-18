@@ -154,7 +154,7 @@ impl Clone for LiveNode {
     }
 }
 
-#[deriving(PartialEq)]
+#[deriving(PartialEq, Show)]
 enum LiveNodeKind {
     FreeVarNode(Span),
     ExprNode(Span),
@@ -240,11 +240,13 @@ struct CaptureInfo {
     var_nid: NodeId
 }
 
+#[deriving(Show)]
 struct LocalInfo {
     id: NodeId,
     ident: Ident
 }
 
+#[deriving(Show)]
 enum VarKind {
     Arg(NodeId, Ident),
     Local(LocalInfo),
@@ -307,7 +309,7 @@ impl<'a, 'tcx> IrMaps<'a, 'tcx> {
             ImplicitRet => {}
         }
 
-        debug!("{} is {:?}", v.to_string(), vk);
+        debug!("{} is {}", v.to_string(), vk);
 
         v
     }
@@ -424,7 +426,7 @@ fn visit_local(ir: &mut IrMaps, local: &ast::Local) {
 fn visit_arm(ir: &mut IrMaps, arm: &Arm) {
     for pat in arm.pats.iter() {
         pat_util::pat_bindings(&ir.tcx.def_map, &**pat, |bm, p_id, sp, path1| {
-            debug!("adding local variable {} from match with bm {:?}",
+            debug!("adding local variable {} from match with bm {}",
                    p_id, bm);
             let name = path1.node;
             ir.add_live_node_for_node(p_id, VarDefNode(sp));
@@ -442,7 +444,7 @@ fn visit_expr(ir: &mut IrMaps, expr: &Expr) {
       // live nodes required for uses or definitions of variables:
       ExprPath(_) => {
         let def = ir.tcx.def_map.borrow().get_copy(&expr.id);
-        debug!("expr {}: path that leads to {:?}", expr.id, def);
+        debug!("expr {}: path that leads to {}", expr.id, def);
         match def {
             DefLocal(..) => ir.add_live_node_for_node(expr.id, ExprNode(expr.span)),
             _ => {}
@@ -484,9 +486,12 @@ fn visit_expr(ir: &mut IrMaps, expr: &Expr) {
       ExprIfLet(..) => {
           ir.tcx.sess.span_bug(expr.span, "non-desugared ExprIfLet");
       }
+      ExprWhileLet(..) => {
+          ir.tcx.sess.span_bug(expr.span, "non-desugared ExprWhileLet");
+      }
       ExprForLoop(ref pat, _, _, _) => {
         pat_util::pat_bindings(&ir.tcx.def_map, &**pat, |bm, p_id, sp, path1| {
-            debug!("adding local variable {} from for loop with bm {:?}",
+            debug!("adding local variable {} from for loop with bm {}",
                    p_id, bm);
             let name = path1.node;
             ir.add_live_node_for_node(p_id, VarDefNode(sp));
@@ -730,7 +735,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
         let mut wr = io::MemWriter::new();
         {
             let wr = &mut wr as &mut io::Writer;
-            write!(wr, "[ln({}) of kind {:?} reads", ln.get(), self.ir.lnk(ln));
+            write!(wr, "[ln({}) of kind {} reads", ln.get(), self.ir.lnk(ln));
             self.write_vars(wr, ln, |idx| self.users.get(idx).reader);
             write!(wr, "  writes");
             self.write_vars(wr, ln, |idx| self.users.get(idx).writer);
@@ -1020,6 +1025,10 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
           ExprWhile(ref cond, ref blk, _) => {
             self.propagate_through_loop(expr, WhileLoop(&**cond), &**blk, succ)
+          }
+
+          ExprWhileLet(..) => {
+              self.ir.tcx.sess.span_bug(expr.span, "non-desugared ExprWhileLet");
           }
 
           ExprForLoop(ref pat, ref head, ref blk, _) => {
@@ -1464,6 +1473,8 @@ fn check_expr(this: &mut Liveness, expr: &Expr) {
         this.pat_bindings(&**pat, |this, ln, var, sp, id| {
             this.warn_about_unused(sp, id, ln, var);
         });
+
+        visit::walk_expr(this, expr);
       }
 
       // no correctness conditions related to liveness
@@ -1479,6 +1490,9 @@ fn check_expr(this: &mut Liveness, expr: &Expr) {
       }
       ExprIfLet(..) => {
         this.ir.tcx.sess.span_bug(expr.span, "non-desugared ExprIfLet");
+      }
+      ExprWhileLet(..) => {
+        this.ir.tcx.sess.span_bug(expr.span, "non-desugared ExprWhileLet");
       }
     }
 }
@@ -1617,11 +1631,11 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                 };
 
                 if is_assigned {
-                    self.ir.tcx.sess.add_lint(lint::builtin::UNUSED_VARIABLE, id, sp,
+                    self.ir.tcx.sess.add_lint(lint::builtin::UNUSED_VARIABLES, id, sp,
                         format!("variable `{}` is assigned to, but never used",
                                 *name));
                 } else {
-                    self.ir.tcx.sess.add_lint(lint::builtin::UNUSED_VARIABLE, id, sp,
+                    self.ir.tcx.sess.add_lint(lint::builtin::UNUSED_VARIABLES, id, sp,
                         format!("unused variable: `{}`", *name));
                 }
             }
@@ -1639,7 +1653,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
         if self.live_on_exit(ln, var).is_none() {
             let r = self.should_warn(var);
             for name in r.iter() {
-                self.ir.tcx.sess.add_lint(lint::builtin::DEAD_ASSIGNMENT, id, sp,
+                self.ir.tcx.sess.add_lint(lint::builtin::UNUSED_ASSIGNMENTS, id, sp,
                     format!("value assigned to `{}` is never read", *name));
             }
         }

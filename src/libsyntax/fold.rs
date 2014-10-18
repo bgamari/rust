@@ -801,11 +801,9 @@ pub fn noop_fold_associated_type<T>(at: AssociatedType, folder: &mut T)
 }
 
 pub fn noop_fold_struct_def<T: Folder>(struct_def: P<StructDef>, fld: &mut T) -> P<StructDef> {
-    struct_def.map(|StructDef {fields, ctor_id, super_struct, is_virtual}| StructDef {
+    struct_def.map(|StructDef { fields, ctor_id }| StructDef {
         fields: fields.move_map(|f| fld.fold_struct_field(f)),
         ctor_id: ctor_id.map(|cid| fld.new_id(cid)),
-        super_struct: super_struct.map(|t| fld.fold_ty(t)),
-        is_virtual: is_virtual
     })
 }
 
@@ -902,6 +900,9 @@ pub fn noop_fold_item_underscore<T: Folder>(i: Item_, folder: &mut T) -> Item_ {
     match i {
         ItemStatic(t, m, e) => {
             ItemStatic(folder.fold_ty(t), m, folder.fold_expr(e))
+        }
+        ItemConst(t, e) => {
+            ItemConst(folder.fold_ty(t), folder.fold_expr(e))
         }
         ItemFn(decl, fn_style, abi, generics, body) => {
             ItemFn(
@@ -1215,6 +1216,12 @@ pub fn noop_fold_expr<T: Folder>(Expr {id, node, span}: Expr, folder: &mut T) ->
                           folder.fold_block(body),
                           opt_ident.map(|i| folder.fold_ident(i)))
             }
+            ExprWhileLet(pat, expr, body, opt_ident) => {
+                ExprWhileLet(folder.fold_pat(pat),
+                             folder.fold_expr(expr),
+                             folder.fold_block(body),
+                             opt_ident.map(|i| folder.fold_ident(i)))
+            }
             ExprForLoop(pat, iter, body, opt_ident) => {
                 ExprForLoop(folder.fold_pat(pat),
                             folder.fold_expr(iter),
@@ -1382,7 +1389,7 @@ mod test {
                 let a_val = $a;
                 let b_val = $b;
                 if !(pred_val(a_val.as_slice(),b_val.as_slice())) {
-                    fail!("expected args satisfying {}, got {:?} and {:?}",
+                    fail!("expected args satisfying {}, got {} and {}",
                           $predname, a_val, b_val);
                 }
             }

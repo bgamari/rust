@@ -18,32 +18,27 @@ use middle::const_eval;
 use middle::def;
 use middle::dependency_format;
 use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem};
-use middle::lang_items::{FnOnceTraitLangItem, OpaqueStructLangItem};
-use middle::lang_items::{TyDescStructLangItem, TyVisitorTraitLangItem};
+use middle::lang_items::{FnOnceTraitLangItem, TyDescStructLangItem};
 use middle::mem_categorization as mc;
 use middle::resolve;
 use middle::resolve_lifetime;
 use middle::stability;
-use middle::subst::{Subst, Substs, VecPerParamSpace};
-use middle::subst;
+use middle::subst::{mod, Subst, Substs, VecPerParamSpace};
 use middle::traits;
 use middle::ty;
 use middle::typeck;
-use middle::ty_fold;
-use middle::ty_fold::{TypeFoldable,TypeFolder};
+use middle::ty_fold::{mod, TypeFoldable,TypeFolder};
 use middle;
 use util::ppaux::{note_and_explain_region, bound_region_ptr_to_string};
 use util::ppaux::{trait_store_to_string, ty_to_string};
 use util::ppaux::{Repr, UserString};
-use util::common::{indenter};
+use util::common::{indenter, memoized, memoized_with_key};
 use util::nodemap::{NodeMap, NodeSet, DefIdMap, DefIdSet, FnvHashMap};
 
 use std::cell::{Cell, RefCell};
 use std::cmp;
-use std::fmt::Show;
-use std::fmt;
+use std::fmt::{mod, Show};
 use std::hash::{Hash, sip, Writer};
-use std::iter::AdditiveIterator;
 use std::mem;
 use std::ops;
 use std::rc::Rc;
@@ -55,20 +50,16 @@ use syntax::ast::{CrateNum, DefId, FnStyle, Ident, ItemTrait, LOCAL_CRATE};
 use syntax::ast::{MutImmutable, MutMutable, Name, NamedField, NodeId};
 use syntax::ast::{Onceness, StmtExpr, StmtSemi, StructField, UnnamedField};
 use syntax::ast::{Visibility};
-use syntax::ast_util::{PostExpansionMethod, is_local, lit_is_str};
-use syntax::ast_util;
-use syntax::attr;
-use syntax::attr::AttrMetaMethods;
+use syntax::ast_util::{mod, PostExpansionMethod, is_local, lit_is_str};
+use syntax::attr::{mod, AttrMetaMethods};
 use syntax::codemap::Span;
-use syntax::parse::token;
-use syntax::parse::token::InternedString;
+use syntax::parse::token::{mod, InternedString};
 use syntax::{ast, ast_map};
-use syntax::util::small_vector::SmallVector;
 use std::collections::enum_set::{EnumSet, CLike};
 
 pub type Disr = u64;
 
-pub static INITIAL_DISCRIMINANT_VALUE: Disr = 0;
+pub const INITIAL_DISCRIMINANT_VALUE: Disr = 0;
 
 // Data types
 
@@ -78,7 +69,7 @@ pub struct field {
     pub mt: mt
 }
 
-#[deriving(Clone)]
+#[deriving(Clone, Show)]
 pub enum ImplOrTraitItemContainer {
     TraitContainer(ast::DefId),
     ImplContainer(ast::DefId),
@@ -146,7 +137,7 @@ impl ImplOrTraitItemId {
     }
 }
 
-#[deriving(Clone)]
+#[deriving(Clone, Show)]
 pub struct Method {
     pub ident: ast::Ident,
     pub generics: ty::Generics,
@@ -276,13 +267,13 @@ pub enum Variance {
     Bivariant,      // T<A> <: T<B>            -- e.g., unused type parameter
 }
 
-#[deriving(Clone)]
+#[deriving(Clone, Show)]
 pub enum AutoAdjustment {
     AdjustAddEnv(ty::TraitStore),
     AdjustDerefRef(AutoDerefRef)
 }
 
-#[deriving(Clone, PartialEq)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum UnsizeKind {
     // [T, ..n] -> [T], the uint field is n.
     UnsizeLength(uint),
@@ -292,13 +283,13 @@ pub enum UnsizeKind {
     UnsizeVtable(TyTrait, /* the self type of the trait */ ty::t)
 }
 
-#[deriving(Clone)]
+#[deriving(Clone, Show)]
 pub struct AutoDerefRef {
     pub autoderefs: uint,
     pub autoref: Option<AutoRef>
 }
 
-#[deriving(Clone, PartialEq)]
+#[deriving(Clone, PartialEq, Show)]
 pub enum AutoRef {
     /// Convert from T to &T
     /// The third field allows us to wrap other AutoRef adjustments.
@@ -493,7 +484,6 @@ pub struct ctxt<'tcx> {
     pub lang_items: middle::lang_items::LanguageItems,
     /// A mapping of fake provided method def_ids to the default implementation
     pub provided_method_sources: RefCell<DefIdMap<ast::DefId>>,
-    pub superstructs: RefCell<DefIdMap<Option<ast::DefId>>>,
     pub struct_fields: RefCell<DefIdMap<Rc<Vec<field_ty>>>>,
 
     /// Maps from def-id of a type or region parameter to its
@@ -735,7 +725,7 @@ pub enum Region {
  * the original var id (that is, the root variable that is referenced
  * by the upvar) and the id of the closure expression.
  */
-#[deriving(Clone, PartialEq, Eq, Hash)]
+#[deriving(Clone, PartialEq, Eq, Hash, Show)]
 pub struct UpvarId {
     pub var_id: ast::NodeId,
     pub closure_expr_id: ast::NodeId,
@@ -836,7 +826,7 @@ pub enum BorrowKind {
  *   the closure, so sometimes it is necessary for them to be larger
  *   than the closure lifetime itself.
  */
-#[deriving(PartialEq, Clone, Encodable, Decodable)]
+#[deriving(PartialEq, Clone, Encodable, Decodable, Show)]
 pub struct UpvarBorrow {
     pub kind: BorrowKind,
     pub region: ty::Region,
@@ -873,6 +863,10 @@ pub enum BoundRegion {
 
     /// Fresh bound identifiers created during GLB computations.
     BrFresh(uint),
+
+    // Anonymous region for the implicit env pointer parameter
+    // to a closure
+    BrEnv
 }
 
 mod primitives {
@@ -918,7 +912,7 @@ mod primitives {
         flags: super::has_ty_err as uint,
     };
 
-    pub static LAST_PRIMITIVE_ID: uint = 18;
+    pub const LAST_PRIMITIVE_ID: uint = 18;
 }
 
 // NB: If you change this, you'll probably want to change the corresponding
@@ -1374,6 +1368,7 @@ impl ParameterEnvironment {
                     ast::ItemEnum(..) |
                     ast::ItemStruct(..) |
                     ast::ItemImpl(..) |
+                    ast::ItemConst(..) |
                     ast::ItemStatic(..) => {
                         let def_id = ast_util::local_def(id);
                         let pty = ty::lookup_item_type(cx, def_id);
@@ -1442,7 +1437,7 @@ pub struct UnboxedClosure {
     pub kind: UnboxedClosureKind,
 }
 
-#[deriving(Clone, PartialEq, Eq)]
+#[deriving(Clone, PartialEq, Eq, Show)]
 pub enum UnboxedClosureKind {
     FnUnboxedClosureKind,
     FnMutUnboxedClosureKind,
@@ -1511,7 +1506,6 @@ pub fn mk_ctxt<'tcx>(s: Session,
         normalized_cache: RefCell::new(HashMap::new()),
         lang_items: lang_items,
         provided_method_sources: RefCell::new(DefIdMap::new()),
-        superstructs: RefCell::new(DefIdMap::new()),
         struct_fields: RefCell::new(DefIdMap::new()),
         destructor_for_type: RefCell::new(DefIdMap::new()),
         destructors: RefCell::new(DefIdSet::new()),
@@ -2127,53 +2121,36 @@ pub fn type_needs_drop(cx: &ctxt, ty: t) -> bool {
 // that only contain scalars and shared boxes can avoid unwind
 // cleanups.
 pub fn type_needs_unwind_cleanup(cx: &ctxt, ty: t) -> bool {
-    match cx.needs_unwind_cleanup_cache.borrow().find(&ty) {
-        Some(&result) => return result,
-        None => ()
-    }
-
-    let mut tycache = HashSet::new();
-    let needs_unwind_cleanup =
-        type_needs_unwind_cleanup_(cx, ty, &mut tycache);
-    cx.needs_unwind_cleanup_cache.borrow_mut().insert(ty, needs_unwind_cleanup);
-    needs_unwind_cleanup
-}
-
-fn type_needs_unwind_cleanup_(cx: &ctxt, ty: t,
-                              tycache: &mut HashSet<t>) -> bool {
-
-    // Prevent infinite recursion
-    if !tycache.insert(ty) {
-        return false;
-    }
-
-    let mut needs_unwind_cleanup = false;
-    maybe_walk_ty(ty, |ty| {
-        let result = match get(ty).sty {
-          ty_nil | ty_bot | ty_bool | ty_int(_) | ty_uint(_) | ty_float(_) |
-          ty_tup(_) | ty_ptr(_) => {
-            true
-          }
-          ty_enum(did, ref substs) => {
-            for v in (*enum_variants(cx, did)).iter() {
-                for aty in v.args.iter() {
-                    let t = aty.subst(cx, substs);
-                    needs_unwind_cleanup |=
-                        type_needs_unwind_cleanup_(cx, t, tycache);
-                }
-            }
-            !needs_unwind_cleanup
-          }
-          _ => {
-            needs_unwind_cleanup = true;
-            false
-          }
-        };
-
-        result
+    return memoized(&cx.needs_unwind_cleanup_cache, ty, |ty| {
+        type_needs_unwind_cleanup_(cx, ty, &mut HashSet::new())
     });
 
-    needs_unwind_cleanup
+    fn type_needs_unwind_cleanup_(cx: &ctxt, ty: t, tycache: &mut HashSet<t>) -> bool {
+        // Prevent infinite recursion
+        if !tycache.insert(ty) {
+            return false;
+        }
+
+        let mut needs_unwind_cleanup = false;
+        maybe_walk_ty(ty, |ty| {
+            needs_unwind_cleanup |= match get(ty).sty {
+                ty_nil | ty_bot | ty_bool | ty_int(_) | ty_uint(_) |
+                ty_float(_) | ty_tup(_) | ty_ptr(_) => false,
+
+                ty_enum(did, ref substs) =>
+                    enum_variants(cx, did).iter().any(|v|
+                        v.args.iter().any(|aty| {
+                            let t = aty.subst(cx, substs);
+                            type_needs_unwind_cleanup_(cx, t, tycache)
+                        })
+                    ),
+
+                _ => true
+            };
+            !needs_unwind_cleanup
+        });
+        needs_unwind_cleanup
+    }
 }
 
 /**
@@ -2188,6 +2165,7 @@ fn type_needs_unwind_cleanup_(cx: &ctxt, ty: t,
  * easier for me (nmatsakis) to think about what is contained within
  * a type than to think about what is *not* contained within a type.
  */
+#[deriving(Clone)]
 pub struct TypeContents {
     pub bits: u64
 }
@@ -2199,7 +2177,7 @@ macro_rules! def_type_content_sets(
             use middle::ty::TypeContents;
             $(
                 #[allow(non_uppercase_statics)]
-                pub static $name: TypeContents = TypeContents { bits: $bits };
+                pub const $name: TypeContents = TypeContents { bits: $bits };
              )+
         }
     }
@@ -2368,18 +2346,9 @@ pub fn type_interior_is_unsafe(cx: &ctxt, t: ty::t) -> bool {
 }
 
 pub fn type_contents(cx: &ctxt, ty: t) -> TypeContents {
-    let ty_id = type_id(ty);
-
-    match cx.tc_cache.borrow().find(&ty_id) {
-        Some(tc) => { return *tc; }
-        None => {}
-    }
-
-    let mut cache = HashMap::new();
-    let result = tc_ty(cx, ty, &mut cache);
-
-    cx.tc_cache.borrow_mut().insert(ty_id, result);
-    return result;
+    return memoized_with_key(&cx.tc_cache, ty, |ty| {
+        tc_ty(cx, ty, &mut HashMap::new())
+    }, |&ty| type_id(ty));
 
     fn tc_ty(cx: &ctxt,
              ty: t,
@@ -2823,11 +2792,14 @@ pub fn is_instantiable(cx: &ctxt, r_ty: t) -> bool {
 /// distinguish between types that are recursive with themselves and types that
 /// contain a different recursive type. These cases can therefore be treated
 /// differently when reporting errors.
-#[deriving(PartialEq)]
+///
+/// The ordering of the cases is significant. They are sorted so that cmp::max
+/// will keep the "more erroneous" of two values.
+#[deriving(PartialOrd, Ord, Eq, PartialEq, Show)]
 pub enum Representability {
     Representable,
-    SelfRecursive,
     ContainsRecursive,
+    SelfRecursive,
 }
 
 /// Check whether a type is representable. This means it cannot contain unboxed
@@ -2835,87 +2807,136 @@ pub enum Representability {
 pub fn is_type_representable(cx: &ctxt, sp: Span, ty: t) -> Representability {
 
     // Iterate until something non-representable is found
-    fn find_nonrepresentable<It: Iterator<t>>(cx: &ctxt, sp: Span, seen: &mut Vec<DefId>,
+    fn find_nonrepresentable<It: Iterator<t>>(cx: &ctxt, sp: Span, seen: &mut Vec<t>,
                                               mut iter: It) -> Representability {
-        for ty in iter {
-            let r = type_structurally_recursive(cx, sp, seen, ty);
-            if r != Representable {
-                 return r
-            }
-        }
-        Representable
+        iter.fold(Representable,
+                  |r, ty| cmp::max(r, is_type_structurally_recursive(cx, sp, seen, ty)))
     }
 
-    // Does the type `ty` directly (without indirection through a pointer)
-    // contain any types on stack `seen`?
-    fn type_structurally_recursive(cx: &ctxt, sp: Span, seen: &mut Vec<DefId>,
-                                   ty: t) -> Representability {
-        debug!("type_structurally_recursive: {}",
-               ::util::ppaux::ty_to_string(cx, ty));
-
-        // Compare current type to previously seen types
+    fn are_inner_types_recursive(cx: &ctxt, sp: Span,
+                                 seen: &mut Vec<t>, ty: t) -> Representability {
         match get(ty).sty {
-            ty_struct(did, _) |
-            ty_enum(did, _) => {
-                for (i, &seen_did) in seen.iter().enumerate() {
-                    if did == seen_did {
-                        return if i == 0 { SelfRecursive }
-                               else { ContainsRecursive }
-                    }
-                }
-            }
-            _ => (),
-        }
-
-        // Check inner types
-        match get(ty).sty {
-            // Tuples
             ty_tup(ref ts) => {
                 find_nonrepresentable(cx, sp, seen, ts.iter().map(|t| *t))
             }
             // Fixed-length vectors.
             // FIXME(#11924) Behavior undecided for zero-length vectors.
             ty_vec(ty, Some(_)) => {
-                type_structurally_recursive(cx, sp, seen, ty)
+                is_type_structurally_recursive(cx, sp, seen, ty)
             }
-
-            // Push struct and enum def-ids onto `seen` before recursing.
             ty_struct(did, ref substs) => {
-                seen.push(did);
                 let fields = struct_fields(cx, did, substs);
-                let r = find_nonrepresentable(cx, sp, seen,
-                                              fields.iter().map(|f| f.mt.ty));
-                seen.pop();
-                r
+                find_nonrepresentable(cx, sp, seen, fields.iter().map(|f| f.mt.ty))
             }
-
             ty_enum(did, ref substs) => {
-                seen.push(did);
                 let vs = enum_variants(cx, did);
+                let iter = vs.iter()
+                    .flat_map(|variant| { variant.args.iter() })
+                    .map(|aty| { aty.subst_spanned(cx, substs, Some(sp)) });
 
-                let mut r = Representable;
-                for variant in vs.iter() {
-                    let iter = variant.args.iter().map(|aty| {
-                        aty.subst_spanned(cx, substs, Some(sp))
-                    });
-                    r = find_nonrepresentable(cx, sp, seen, iter);
-
-                    if r != Representable { break }
-                }
-
-                seen.pop();
-                r
+                find_nonrepresentable(cx, sp, seen, iter)
             }
-
             ty_unboxed_closure(did, _) => {
                 let upvars = unboxed_closure_upvars(cx, did);
-                find_nonrepresentable(cx,
-                                      sp,
-                                      seen,
-                                      upvars.iter().map(|f| f.ty))
+                find_nonrepresentable(cx, sp, seen, upvars.iter().map(|f| f.ty))
             }
-
             _ => Representable,
+        }
+    }
+
+    fn same_struct_or_enum_def_id(ty: t, did: DefId) -> bool {
+        match get(ty).sty {
+            ty_struct(ty_did, _) | ty_enum(ty_did, _) => {
+                 ty_did == did
+            }
+            _ => false
+        }
+    }
+
+    fn same_type(a: t, b: t) -> bool {
+        match (&get(a).sty, &get(b).sty) {
+            (&ty_struct(did_a, ref substs_a), &ty_struct(did_b, ref substs_b)) |
+            (&ty_enum(did_a, ref substs_a), &ty_enum(did_b, ref substs_b)) => {
+                if did_a != did_b {
+                    return false;
+                }
+
+                let types_a = substs_a.types.get_slice(subst::TypeSpace);
+                let types_b = substs_b.types.get_slice(subst::TypeSpace);
+
+                let mut pairs = types_a.iter().zip(types_b.iter());
+
+                pairs.all(|(&a, &b)| same_type(a, b))
+            }
+            _ => {
+                type_id(a) == type_id(b)
+            }
+        }
+    }
+
+    // Does the type `ty` directly (without indirection through a pointer)
+    // contain any types on stack `seen`?
+    fn is_type_structurally_recursive(cx: &ctxt, sp: Span, seen: &mut Vec<t>,
+                                      ty: t) -> Representability {
+        debug!("is_type_structurally_recursive: {}",
+               ::util::ppaux::ty_to_string(cx, ty));
+
+        match get(ty).sty {
+            ty_struct(did, _) | ty_enum(did, _) => {
+                {
+                    // Iterate through stack of previously seen types.
+                    let mut iter = seen.iter();
+
+                    // The first item in `seen` is the type we are actually curious about.
+                    // We want to return SelfRecursive if this type contains itself.
+                    // It is important that we DON'T take generic parameters into account
+                    // for this check, so that Bar<T> in this example counts as SelfRecursive:
+                    //
+                    // struct Foo;
+                    // struct Bar<T> { x: Bar<Foo> }
+
+                    match iter.next() {
+                        Some(&seen_type) => {
+                            if same_struct_or_enum_def_id(seen_type, did) {
+                                debug!("SelfRecursive: {} contains {}",
+                                       ::util::ppaux::ty_to_string(cx, seen_type),
+                                       ::util::ppaux::ty_to_string(cx, ty));
+                                return SelfRecursive;
+                            }
+                        }
+                        None => {}
+                    }
+
+                    // We also need to know whether the first item contains other types that
+                    // are structurally recursive. If we don't catch this case, we will recurse
+                    // infinitely for some inputs.
+                    //
+                    // It is important that we DO take generic parameters into account here,
+                    // so that code like this is considered SelfRecursive, not ContainsRecursive:
+                    //
+                    // struct Foo { Option<Option<Foo>> }
+
+                    for &seen_type in iter {
+                        if same_type(ty, seen_type) {
+                            debug!("ContainsRecursive: {} contains {}",
+                                   ::util::ppaux::ty_to_string(cx, seen_type),
+                                   ::util::ppaux::ty_to_string(cx, ty));
+                            return ContainsRecursive;
+                        }
+                    }
+                }
+
+                // For structs and enums, track all previously seen types by pushing them
+                // onto the 'seen' stack.
+                seen.push(ty);
+                let out = are_inner_types_recursive(cx, sp, seen, ty);
+                seen.pop();
+                out
+            }
+            _ => {
+                // No need to push in other cases.
+                are_inner_types_recursive(cx, sp, seen, ty)
+            }
         }
     }
 
@@ -2925,8 +2946,11 @@ pub fn is_type_representable(cx: &ctxt, sp: Span, ty: t) -> Representability {
     // To avoid a stack overflow when checking an enum variant or struct that
     // contains a different, structurally recursive type, maintain a stack
     // of seen types and check recursion for each of them (issues #3008, #3779).
-    let mut seen: Vec<DefId> = Vec::new();
-    type_structurally_recursive(cx, sp, &mut seen, ty)
+    let mut seen: Vec<t> = Vec::new();
+    let r = is_type_structurally_recursive(cx, sp, &mut seen, ty);
+    debug!("is_type_representable: {} is {}",
+           ::util::ppaux::ty_to_string(cx, ty), r);
+    r
 }
 
 pub fn type_is_trait(ty: t) -> bool {
@@ -3167,7 +3191,7 @@ pub fn fn_is_variadic(fty: t) -> bool {
         ty_bare_fn(ref f) => f.sig.variadic,
         ty_closure(ref f) => f.sig.variadic,
         ref s => {
-            fail!("fn_is_variadic() called on non-fn type: {:?}", s)
+            fail!("fn_is_variadic() called on non-fn type: {}", s)
         }
     }
 }
@@ -3177,7 +3201,7 @@ pub fn ty_fn_sig(fty: t) -> FnSig {
         ty_bare_fn(ref f) => f.sig.clone(),
         ty_closure(ref f) => f.sig.clone(),
         ref s => {
-            fail!("ty_fn_sig() called on non-fn type: {:?}", s)
+            fail!("ty_fn_sig() called on non-fn type: {}", s)
         }
     }
 }
@@ -3197,7 +3221,7 @@ pub fn ty_fn_args(fty: t) -> Vec<t> {
         ty_bare_fn(ref f) => f.sig.inputs.clone(),
         ty_closure(ref f) => f.sig.inputs.clone(),
         ref s => {
-            fail!("ty_fn_args() called on non-fn type: {:?}", s)
+            fail!("ty_fn_args() called on non-fn type: {}", s)
         }
     }
 }
@@ -3211,7 +3235,7 @@ pub fn ty_closure_store(fty: t) -> TraitStore {
             UniqTraitStore
         }
         ref s => {
-            fail!("ty_closure_store() called on non-closure type: {:?}", s)
+            fail!("ty_closure_store() called on non-closure type: {}", s)
         }
     }
 }
@@ -3221,7 +3245,7 @@ pub fn ty_fn_ret(fty: t) -> t {
         ty_bare_fn(ref f) => f.sig.output,
         ty_closure(ref f) => f.sig.output,
         ref s => {
-            fail!("ty_fn_ret() called on non-fn type: {:?}", s)
+            fail!("ty_fn_ret() called on non-fn type: {}", s)
         }
     }
 }
@@ -3242,7 +3266,7 @@ pub fn ty_region(tcx: &ctxt,
         ref s => {
             tcx.sess.span_bug(
                 span,
-                format!("ty_region() invoked on an inappropriate ty: {:?}",
+                format!("ty_region() invoked on an inappropriate ty: {}",
                         s).as_slice());
         }
     }
@@ -3306,7 +3330,7 @@ pub fn expr_span(cx: &ctxt, id: NodeId) -> Span {
             e.span
         }
         Some(f) => {
-            cx.sess.bug(format!("Node id {} is not an expr: {:?}",
+            cx.sess.bug(format!("Node id {} is not an expr: {}",
                                 id,
                                 f).as_slice());
         }
@@ -3326,14 +3350,14 @@ pub fn local_var_name_str(cx: &ctxt, id: NodeId) -> InternedString {
                 }
                 _ => {
                     cx.sess.bug(
-                        format!("Variable id {} maps to {:?}, not local",
+                        format!("Variable id {} maps to {}, not local",
                                 id,
                                 pat).as_slice());
                 }
             }
         }
         r => {
-            cx.sess.bug(format!("Variable id {} maps to {:?}, not local",
+            cx.sess.bug(format!("Variable id {} maps to {}, not local",
                                 id,
                                 r).as_slice());
         }
@@ -3377,7 +3401,7 @@ pub fn adjust_ty(cx: &ctxt,
                         ref b => {
                             cx.sess.bug(
                                 format!("add_env adjustment on non-bare-fn: \
-                                         {:?}",
+                                         {}",
                                         b).as_slice());
                         }
                     }
@@ -3490,7 +3514,7 @@ pub fn resolve_expr(tcx: &ctxt, expr: &ast::Expr) -> def::Def {
         Some(&def) => def,
         None => {
             tcx.sess.span_bug(expr.span, format!(
-                "no def-map entry for expr {:?}", expr.id).as_slice());
+                "no def-map entry for expr {}", expr.id).as_slice());
         }
     }
 }
@@ -3576,10 +3600,12 @@ pub fn expr_kind(tcx: &ctxt, expr: &ast::Expr) -> ExprKind {
                 def::DefUpvar(..) |
                 def::DefLocal(..) => LvalueExpr,
 
+                def::DefConst(..) => RvalueDatumExpr,
+
                 def => {
                     tcx.sess.span_bug(
                         expr.span,
-                        format!("uncategorized def for expr {:?}: {:?}",
+                        format!("uncategorized def for expr {}: {}",
                                 expr.id,
                                 def).as_slice());
                 }
@@ -3611,6 +3637,9 @@ pub fn expr_kind(tcx: &ctxt, expr: &ast::Expr) -> ExprKind {
 
         ast::ExprIfLet(..) => {
             tcx.sess.span_bug(expr.span, "non-desugared ExprIfLet");
+        }
+        ast::ExprWhileLet(..) => {
+            tcx.sess.span_bug(expr.span, "non-desugared ExprWhileLet");
         }
 
         ast::ExprLit(ref lit) if lit_is_str(&**lit) => {
@@ -3700,7 +3729,7 @@ pub fn field_idx_strict(tcx: &ctxt, name: ast::Name, fields: &[field])
     let mut i = 0u;
     for f in fields.iter() { if f.ident.name == name { return i; } i += 1u; }
     tcx.sess.bug(format!(
-        "no field named `{}` found in the list of fields `{:?}`",
+        "no field named `{}` found in the list of fields `{}`",
         token::get_name(name),
         fields.iter()
               .map(|f| token::get_ident(f.ident).get().to_string())
@@ -3994,7 +4023,7 @@ fn lookup_locally_or_in_crate_store<V:Clone>(
     }
 
     if def_id.krate == ast::LOCAL_CRATE {
-        fail!("No def'n found for {:?} in tcx.{}", def_id, descr);
+        fail!("No def'n found for {} in tcx.{}", def_id, descr);
     }
     let v = load_external();
     map.insert(def_id, v.clone());
@@ -4038,9 +4067,8 @@ pub fn impl_or_trait_item(cx: &ctxt, id: ast::DefId) -> ImplOrTraitItem {
 /// Returns true if the given ID refers to an associated type and false if it
 /// refers to anything else.
 pub fn is_associated_type(cx: &ctxt, id: ast::DefId) -> bool {
-    let result = match cx.associated_types.borrow_mut().find(&id) {
-        Some(result) => return *result,
-        None if id.krate == ast::LOCAL_CRATE => {
+    memoized(&cx.associated_types, id, |id: ast::DefId| {
+        if id.krate == ast::LOCAL_CRATE {
             match cx.impl_or_trait_items.borrow().find(&id) {
                 Some(ref item) => {
                     match **item {
@@ -4050,14 +4078,10 @@ pub fn is_associated_type(cx: &ctxt, id: ast::DefId) -> bool {
                 }
                 None => false,
             }
-        }
-        None => {
+        } else {
             csearch::is_associated_type(&cx.sess.cstore, id)
         }
-    };
-
-    cx.associated_types.borrow_mut().insert(id, result);
-    result
+    })
 }
 
 /// Returns the parameter index that the given associated type corresponds to.
@@ -4115,35 +4139,29 @@ pub fn trait_item_def_ids(cx: &ctxt, id: ast::DefId)
 }
 
 pub fn impl_trait_ref(cx: &ctxt, id: ast::DefId) -> Option<Rc<TraitRef>> {
-    match cx.impl_trait_cache.borrow().find(&id) {
-        Some(ret) => { return ret.clone(); }
-        None => {}
-    }
-
-    let ret = if id.krate == ast::LOCAL_CRATE {
-        debug!("(impl_trait_ref) searching for trait impl {:?}", id);
-        match cx.map.find(id.node) {
-            Some(ast_map::NodeItem(item)) => {
-                match item.node {
-                    ast::ItemImpl(_, ref opt_trait, _, _) => {
-                        match opt_trait {
-                            &Some(ref t) => {
-                                Some(ty::node_id_to_trait_ref(cx, t.ref_id))
+    memoized(&cx.impl_trait_cache, id, |id: ast::DefId| {
+        if id.krate == ast::LOCAL_CRATE {
+            debug!("(impl_trait_ref) searching for trait impl {}", id);
+            match cx.map.find(id.node) {
+                Some(ast_map::NodeItem(item)) => {
+                    match item.node {
+                        ast::ItemImpl(_, ref opt_trait, _, _) => {
+                            match opt_trait {
+                                &Some(ref t) => {
+                                    Some(ty::node_id_to_trait_ref(cx, t.ref_id))
+                                }
+                                &None => None
                             }
-                            &None => None
                         }
+                        _ => None
                     }
-                    _ => None
                 }
+                _ => None
             }
-            _ => None
+        } else {
+            csearch::get_impl_trait(cx, id)
         }
-    } else {
-        csearch::get_impl_trait(cx, id)
-    };
-
-    cx.impl_trait_cache.borrow_mut().insert(id, ret.clone());
-    ret
+    })
 }
 
 pub fn trait_ref_to_def_id(tcx: &ctxt, tr: &ast::TraitRef) -> ast::DefId {
@@ -4329,72 +4347,66 @@ pub fn type_is_empty(cx: &ctxt, t: t) -> bool {
 }
 
 pub fn enum_variants(cx: &ctxt, id: ast::DefId) -> Rc<Vec<Rc<VariantInfo>>> {
-    match cx.enum_var_cache.borrow().find(&id) {
-        Some(variants) => return variants.clone(),
-        _ => { /* fallthrough */ }
-    }
+    memoized(&cx.enum_var_cache, id, |id: ast::DefId| {
+        if ast::LOCAL_CRATE != id.krate {
+            Rc::new(csearch::get_enum_variants(cx, id))
+        } else {
+            /*
+              Although both this code and check_enum_variants in typeck/check
+              call eval_const_expr, it should never get called twice for the same
+              expr, since check_enum_variants also updates the enum_var_cache
+             */
+            match cx.map.get(id.node) {
+                ast_map::NodeItem(ref item) => {
+                    match item.node {
+                        ast::ItemEnum(ref enum_definition, _) => {
+                            let mut last_discriminant: Option<Disr> = None;
+                            Rc::new(enum_definition.variants.iter().map(|variant| {
 
-    let result = if ast::LOCAL_CRATE != id.krate {
-        Rc::new(csearch::get_enum_variants(cx, id))
-    } else {
-        /*
-          Although both this code and check_enum_variants in typeck/check
-          call eval_const_expr, it should never get called twice for the same
-          expr, since check_enum_variants also updates the enum_var_cache
-         */
-        match cx.map.get(id.node) {
-            ast_map::NodeItem(ref item) => {
-                match item.node {
-                    ast::ItemEnum(ref enum_definition, _) => {
-                        let mut last_discriminant: Option<Disr> = None;
-                        Rc::new(enum_definition.variants.iter().map(|variant| {
+                                let mut discriminant = match last_discriminant {
+                                    Some(val) => val + 1,
+                                    None => INITIAL_DISCRIMINANT_VALUE
+                                };
 
-                            let mut discriminant = match last_discriminant {
-                                Some(val) => val + 1,
-                                None => INITIAL_DISCRIMINANT_VALUE
-                            };
+                                match variant.node.disr_expr {
+                                    Some(ref e) =>
+                                        match const_eval::eval_const_expr_partial(cx, &**e) {
+                                            Ok(const_eval::const_int(val)) => {
+                                                discriminant = val as Disr
+                                            }
+                                            Ok(const_eval::const_uint(val)) => {
+                                                discriminant = val as Disr
+                                            }
+                                            Ok(_) => {
+                                                cx.sess
+                                                  .span_err(e.span,
+                                                            "expected signed integer constant");
+                                            }
+                                            Err(ref err) => {
+                                                cx.sess
+                                                  .span_err(e.span,
+                                                            format!("expected constant: {}",
+                                                                    *err).as_slice());
+                                            }
+                                        },
+                                    None => {}
+                                };
 
-                            match variant.node.disr_expr {
-                                Some(ref e) => match const_eval::eval_const_expr_partial(cx, &**e) {
-                                    Ok(const_eval::const_int(val)) => {
-                                        discriminant = val as Disr
-                                    }
-                                    Ok(const_eval::const_uint(val)) => {
-                                        discriminant = val as Disr
-                                    }
-                                    Ok(_) => {
-                                        cx.sess
-                                          .span_err(e.span,
-                                                    "expected signed integer constant");
-                                    }
-                                    Err(ref err) => {
-                                        cx.sess
-                                          .span_err(e.span,
-                                                    format!("expected constant: {}",
-                                                            *err).as_slice());
-                                    }
-                                },
-                                None => {}
-                            };
-
-                            last_discriminant = Some(discriminant);
-                            Rc::new(VariantInfo::from_ast_variant(cx, &**variant,
-                                                                  discriminant))
-                        }).collect())
-                    }
-                    _ => {
-                        cx.sess.bug("enum_variants: id not bound to an enum")
+                                last_discriminant = Some(discriminant);
+                                Rc::new(VariantInfo::from_ast_variant(cx, &**variant,
+                                                                      discriminant))
+                            }).collect())
+                        }
+                        _ => {
+                            cx.sess.bug("enum_variants: id not bound to an enum")
+                        }
                     }
                 }
+                _ => cx.sess.bug("enum_variants: id not bound to an enum")
             }
-            _ => cx.sess.bug("enum_variants: id not bound to an enum")
         }
-    };
-
-    cx.enum_var_cache.borrow_mut().insert(id, result.clone());
-    result
+    })
 }
-
 
 // Returns information about the enum variant with the given ID:
 pub fn enum_variant_with_id(cx: &ctxt,
@@ -4419,21 +4431,11 @@ pub fn lookup_item_type(cx: &ctxt,
 }
 
 /// Given the did of a trait, returns its canonical trait ref.
-pub fn lookup_trait_def(cx: &ctxt, did: ast::DefId) -> Rc<ty::TraitDef> {
-    let mut trait_defs = cx.trait_defs.borrow_mut();
-    match trait_defs.find_copy(&did) {
-        Some(trait_def) => {
-            // The item is in this crate. The caller should have added it to the
-            // type cache already
-            trait_def
-        }
-        None => {
-            assert!(did.krate != ast::LOCAL_CRATE);
-            let trait_def = Rc::new(csearch::get_trait_def(cx, did));
-            trait_defs.insert(did, trait_def.clone());
-            trait_def
-        }
-    }
+pub fn lookup_trait_def(cx: &ctxt, did: DefId) -> Rc<ty::TraitDef> {
+    memoized(&cx.trait_defs, did, |did: DefId| {
+        assert!(did.krate != ast::LOCAL_CRATE);
+        Rc::new(csearch::get_trait_def(cx, did))
+    })
 }
 
 /// Given a reference to a trait, returns the bounds declared on the
@@ -4494,26 +4496,19 @@ pub fn lookup_simd(tcx: &ctxt, did: DefId) -> bool {
 
 /// Obtain the representation annotation for a struct definition.
 pub fn lookup_repr_hints(tcx: &ctxt, did: DefId) -> Rc<Vec<attr::ReprAttr>> {
-    match tcx.repr_hint_cache.borrow().find(&did) {
-        None => {}
-        Some(ref hints) => return (*hints).clone(),
-    }
-
-    let acc = if did.krate == LOCAL_CRATE {
-        let mut acc = Vec::new();
-        ty::each_attr(tcx, did, |meta| {
-            acc.extend(attr::find_repr_attrs(tcx.sess.diagnostic(),
-                                             meta).into_iter());
-            true
-        });
-        acc
-    } else {
-        csearch::get_repr_attrs(&tcx.sess.cstore, did)
-    };
-
-    let acc = Rc::new(acc);
-    tcx.repr_hint_cache.borrow_mut().insert(did, acc.clone());
-    acc
+    memoized(&tcx.repr_hint_cache, did, |did: DefId| {
+        Rc::new(if did.krate == LOCAL_CRATE {
+            let mut acc = Vec::new();
+            ty::each_attr(tcx, did, |meta| {
+                acc.extend(attr::find_repr_attrs(tcx.sess.diagnostic(),
+                                                 meta).into_iter());
+                true
+            });
+            acc
+        } else {
+            csearch::get_repr_attrs(&tcx.sess.cstore, did)
+        })
+    })
 }
 
 // Look up a field ID, whether or not it's local
@@ -4536,53 +4531,19 @@ pub fn lookup_field_type(tcx: &ctxt,
     t.subst(tcx, substs)
 }
 
-// Lookup all ancestor structs of a struct indicated by did. That is the reflexive,
-// transitive closure of doing a single lookup in cx.superstructs.
-fn each_super_struct(cx: &ctxt, mut did: ast::DefId, f: |ast::DefId|) {
-    let superstructs = cx.superstructs.borrow();
-
-    loop {
-        f(did);
-        match superstructs.find(&did) {
-            Some(&Some(def_id)) => {
-                did = def_id;
-            },
-            Some(&None) => break,
-            None => {
-                cx.sess.bug(
-                    format!("ID not mapped to super-struct: {}",
-                            cx.map.node_to_string(did.node)).as_slice());
-            }
-        }
-    }
-}
-
 // Look up the list of field names and IDs for a given struct.
 // Fails if the id is not bound to a struct.
 pub fn lookup_struct_fields(cx: &ctxt, did: ast::DefId) -> Vec<field_ty> {
     if did.krate == ast::LOCAL_CRATE {
-        // We store the fields which are syntactically in each struct in cx. So
-        // we have to walk the inheritance chain of the struct to get all the
-        // fields (explicit and inherited) for a struct. If this is expensive
-        // we could cache the whole list of fields here.
         let struct_fields = cx.struct_fields.borrow();
-        let mut results: SmallVector<&[field_ty]> = SmallVector::zero();
-        each_super_struct(cx, did, |s| {
-            match struct_fields.find(&s) {
-                Some(fields) => results.push(fields.as_slice()),
-                _ => {
-                    cx.sess.bug(
-                        format!("ID not mapped to struct fields: {}",
-                                cx.map.node_to_string(did.node)).as_slice());
-                }
+        match struct_fields.find(&did) {
+            Some(fields) => (**fields).clone(),
+            _ => {
+                cx.sess.bug(
+                    format!("ID not mapped to struct fields: {}",
+                            cx.map.node_to_string(did.node)).as_slice());
             }
-        });
-
-        let len = results.as_slice().iter().map(|x| x.len()).sum();
-        let mut result: Vec<field_ty> = Vec::with_capacity(len);
-        result.extend(results.as_slice().iter().flat_map(|rs| rs.iter().map(|f| f.clone())));
-        assert!(result.len() == len);
-        result
+        }
     } else {
         csearch::get_struct_fields(&cx.sess.cstore, did)
     }
@@ -4916,33 +4877,6 @@ pub fn get_tydesc_ty(tcx: &ctxt) -> Result<t, String> {
         tcx.intrinsic_defs.borrow().find_copy(&tydesc_lang_item)
             .expect("Failed to resolve TyDesc")
     })
-}
-
-pub fn get_opaque_ty(tcx: &ctxt) -> Result<t, String> {
-    tcx.lang_items.require(OpaqueStructLangItem).map(|opaque_lang_item| {
-        tcx.intrinsic_defs.borrow().find_copy(&opaque_lang_item)
-            .expect("Failed to resolve Opaque")
-    })
-}
-
-pub fn visitor_object_ty(tcx: &ctxt,
-                         ptr_region: ty::Region,
-                         trait_region: ty::Region)
-                         -> Result<(Rc<TraitRef>, t), String>
-{
-    let trait_lang_item = match tcx.lang_items.require(TyVisitorTraitLangItem) {
-        Ok(id) => id,
-        Err(s) => { return Err(s); }
-    };
-    let substs = Substs::empty();
-    let trait_ref = Rc::new(TraitRef { def_id: trait_lang_item, substs: substs });
-    Ok((trait_ref.clone(),
-        mk_rptr(tcx, ptr_region,
-                mt {mutbl: ast::MutMutable,
-                    ty: mk_trait(tcx,
-                                 trait_ref.def_id,
-                                 trait_ref.substs.clone(),
-                                 ty::region_existential_bound(trait_region))})))
 }
 
 pub fn item_variances(tcx: &ctxt, item_id: ast::DefId) -> Rc<ItemVariances> {
@@ -5515,7 +5449,7 @@ impl<'tcx> mc::Typer<'tcx> for ty::ctxt<'tcx> {
 }
 
 /// The category of explicit self.
-#[deriving(Clone, Eq, PartialEq)]
+#[deriving(Clone, Eq, PartialEq, Show)]
 pub enum ExplicitSelfCategory {
     StaticExplicitSelfCategory,
     ByValueExplicitSelfCategory,

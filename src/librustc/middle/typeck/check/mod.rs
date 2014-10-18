@@ -127,7 +127,6 @@ use std::rc::Rc;
 use syntax::abi;
 use syntax::ast::{ProvidedMethod, RequiredMethod, TypeTraitItem};
 use syntax::ast;
-use syntax::ast_map;
 use syntax::ast_util::{local_def, PostExpansionMethod};
 use syntax::ast_util;
 use syntax::attr;
@@ -602,68 +601,11 @@ fn check_fn<'a, 'tcx>(ccx: &'a CrateCtxt<'a, 'tcx>,
     fcx
 }
 
-fn span_for_field(tcx: &ty::ctxt, field: &ty::field_ty, struct_id: ast::DefId) -> Span {
-    assert!(field.id.krate == ast::LOCAL_CRATE);
-    let item = match tcx.map.find(struct_id.node) {
-        Some(ast_map::NodeItem(item)) => item,
-        None => fail!("node not in ast map: {}", struct_id.node),
-        _ => fail!("expected item, found {}", tcx.map.node_to_string(struct_id.node))
-    };
-
-    match item.node {
-        ast::ItemStruct(ref struct_def, _) => {
-            match struct_def.fields.iter().find(|f| match f.node.kind {
-                ast::NamedField(ident, _) => ident.name == field.name,
-                _ => false,
-            }) {
-                Some(f) => f.span,
-                None => {
-                    tcx.sess
-                       .bug(format!("Could not find field {}",
-                                    token::get_name(field.name)).as_slice())
-                }
-            }
-        },
-        _ => tcx.sess.bug("Field found outside of a struct?"),
-    }
-}
-
-// Check struct fields are uniquely named wrt parents.
-fn check_for_field_shadowing(tcx: &ty::ctxt,
-                             id: ast::DefId) {
-    let struct_fields = tcx.struct_fields.borrow();
-    let fields = struct_fields.get(&id);
-
-    let superstructs = tcx.superstructs.borrow();
-    let super_struct = superstructs.get(&id);
-    match *super_struct {
-        Some(parent_id) => {
-            let super_fields = ty::lookup_struct_fields(tcx, parent_id);
-            for f in fields.iter() {
-                match super_fields.iter().find(|sf| f.name == sf.name) {
-                    Some(prev_field) => {
-                        span_err!(tcx.sess, span_for_field(tcx, f, id), E0041,
-                            "field `{}` hides field declared in super-struct",
-                            token::get_name(f.name));
-                        span_note!(tcx.sess, span_for_field(tcx, prev_field, parent_id),
-                            "previously declared here");
-                    },
-                    None => {}
-                }
-            }
-        },
-        None => {}
-    }
-}
-
 pub fn check_struct(ccx: &CrateCtxt, id: ast::NodeId, span: Span) {
     let tcx = ccx.tcx;
 
     check_representable(tcx, span, id, "struct");
     check_instantiable(tcx, span, id);
-
-    // Check there are no overlapping fields in super-structs
-    check_for_field_shadowing(tcx, local_def(id));
 
     if ty::lookup_simd(tcx, local_def(id)) {
         check_simd(tcx, span, id);
@@ -677,7 +619,8 @@ pub fn check_item(ccx: &CrateCtxt, it: &ast::Item) {
     let _indenter = indenter();
 
     match it.node {
-      ast::ItemStatic(_, _, ref e) => check_const(ccx, it.span, &**e, it.id),
+      ast::ItemStatic(_, _, ref e) |
+      ast::ItemConst(_, ref e) => check_const(ccx, it.span, &**e, it.id),
       ast::ItemEnum(ref enum_definition, _) => {
         check_enum_variants(ccx,
                             it.span,
@@ -1620,7 +1563,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             None => {
                 self.tcx().sess.span_bug(
                     span,
-                    format!("no type for local variable {:?}",
+                    format!("no type for local variable {}",
                             nid).as_slice());
             }
         }
@@ -1679,7 +1622,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                             node_id: ast::NodeId,
                             span: Span,
                             adj: ty::AutoAdjustment) {
-        debug!("write_adjustment(node_id={:?}, adj={:?})", node_id, adj);
+        debug!("write_adjustment(node_id={}, adj={})", node_id, adj);
 
         // Careful: adjustments can imply trait obligations if we are
         // casting from a concrete type to an object type. I think
@@ -1730,7 +1673,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
     fn register_unsize_obligations(&self,
                                    span: Span,
                                    unsize: &ty::UnsizeKind) {
-        debug!("register_unsize_obligations: unsize={:?}", unsize);
+        debug!("register_unsize_obligations: unsize={}", unsize);
 
         match *unsize {
             ty::UnsizeLength(..) => {}
@@ -1738,10 +1681,17 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                 self.register_unsize_obligations(span, &**u)
             }
             ty::UnsizeVtable(ref ty_trait, self_ty) => {
+                // If the type is `Foo+'a`, ensures that the type
+                // being cast to `Foo+'a` implements `Foo`:
                 vtable2::register_object_cast_obligations(self,
                                                           span,
                                                           ty_trait,
                                                           self_ty);
+
+                // If the type is `Foo+'a`, ensures that the type
+                // being cast to `Foo+'a` outlives `'a`:
+                let origin = infer::RelateObjectBound(span);
+                self.register_region_obligation(origin, self_ty, ty_trait.bounds.region_bound);
             }
         }
     }
@@ -2608,7 +2558,7 @@ fn check_argument_types<'a>(fcx: &FnCtxt,
         err_args(supplied_arg_count)
     };
 
-    debug!("check_argument_types: formal_tys={:?}",
+    debug!("check_argument_types: formal_tys={}",
            formal_tys.iter().map(|t| fcx.infcx().ty_to_string(*t)).collect::<Vec<String>>());
 
     // Check the arguments.
@@ -2975,12 +2925,10 @@ fn check_expr_with_unifier(fcx: &FnCtxt,
                          expr: &ast::Expr,
                          method_name: ast::SpannedIdent,
                          args: &[P<ast::Expr>],
-                         tps: &[P<ast::Ty>]) {
+                         tps: &[P<ast::Ty>],
+                         lvalue_pref: LvaluePreference) {
         let rcvr = &*args[0];
-        // We can't know if we need &mut self before we look up the method,
-        // so treat the receiver as mutable just in case - only explicit
-        // overloaded dereferences care about the distinction.
-        check_expr_with_lvalue_pref(fcx, &*rcvr, PreferMutLvalue);
+        check_expr_with_lvalue_pref(fcx, &*rcvr, lvalue_pref);
 
         // no need to check for bot/err -- callee does that
         let expr_t = structurally_resolved_type(fcx,
@@ -3056,35 +3004,36 @@ fn check_expr_with_unifier(fcx: &FnCtxt,
                        expected: Expectation) {
         check_expr_has_type(fcx, cond_expr, ty::mk_bool());
 
+        // Disregard "castable to" expectations because they
+        // can lead us astray. Consider for example `if cond
+        // {22} else {c} as u8` -- if we propagate the
+        // "castable to u8" constraint to 22, it will pick the
+        // type 22u8, which is overly constrained (c might not
+        // be a u8). In effect, the problem is that the
+        // "castable to" expectation is not the tightest thing
+        // we can say, so we want to drop it in this case.
+        // The tightest thing we can say is "must unify with
+        // else branch". Note that in the case of a "has type"
+        // constraint, this limitation does not hold.
+
+        // If the expected type is just a type variable, then don't use
+        // an expected type. Otherwise, we might write parts of the type
+        // when checking the 'then' block which are incompatible with the
+        // 'else' branch.
+        let expected = match expected.only_has_type() {
+            ExpectHasType(ety) => {
+                match infer::resolve_type(fcx.infcx(), Some(sp), ety, force_tvar) {
+                    Ok(rty) if !ty::type_is_ty_var(rty) => ExpectHasType(rty),
+                    _ => NoExpectation
+                }
+            }
+            _ => NoExpectation
+        };
+        check_block_with_expected(fcx, then_blk, expected);
+        let then_ty = fcx.node_ty(then_blk.id);
+
         let branches_ty = match opt_else_expr {
             Some(ref else_expr) => {
-                // Disregard "castable to" expectations because they
-                // can lead us astray. Consider for example `if cond
-                // {22} else {c} as u8` -- if we propagate the
-                // "castable to u8" constraint to 22, it will pick the
-                // type 22u8, which is overly constrained (c might not
-                // be a u8). In effect, the problem is that the
-                // "castable to" expectation is not the tightest thing
-                // we can say, so we want to drop it in this case.
-                // The tightest thing we can say is "must unify with
-                // else branch". Note that in the case of a "has type"
-                // constraint, this limitation does not hold.
-
-                // If the expected type is just a type variable, then don't use
-                // an expected type. Otherwise, we might write parts of the type
-                // when checking the 'then' block which are incompatible with the
-                // 'else' branch.
-                let expected = match expected.only_has_type() {
-                    ExpectHasType(ety) => {
-                        match infer::resolve_type(fcx.infcx(), Some(sp), ety, force_tvar) {
-                            Ok(rty) if !ty::type_is_ty_var(rty) => ExpectHasType(rty),
-                            _ => NoExpectation
-                        }
-                    }
-                    _ => NoExpectation
-                };
-                check_block_with_expected(fcx, then_blk, expected);
-                let then_ty = fcx.node_ty(then_blk.id);
                 check_expr_with_expectation(fcx, &**else_expr, expected);
                 let else_ty = fcx.expr_ty(&**else_expr);
                 infer::common_supertype(fcx.infcx(),
@@ -3094,8 +3043,11 @@ fn check_expr_with_unifier(fcx: &FnCtxt,
                                         else_ty)
             }
             None => {
-                check_block_no_value(fcx, then_blk);
-                ty::mk_nil()
+                infer::common_supertype(fcx.infcx(),
+                                        infer::IfExpressionWithNoElse(sp),
+                                        false,
+                                        then_ty,
+                                        ty::mk_nil())
             }
         };
 
@@ -4115,6 +4067,9 @@ fn check_expr_with_unifier(fcx: &FnCtxt,
             fcx.write_nil(id);
         }
       }
+      ast::ExprWhileLet(..) => {
+        tcx.sess.span_bug(expr.span, "non-desugared ExprWhileLet");
+      }
       ast::ExprForLoop(ref pat, ref head, ref block, _) => {
         check_expr(fcx, &**head);
         let typ = lookup_method_for_for_loop(fcx, &**head, expr.id);
@@ -4195,7 +4150,7 @@ fn check_expr_with_unifier(fcx: &FnCtxt,
           }
       }
       ast::ExprMethodCall(ident, ref tps, ref args) => {
-        check_method_call(fcx, expr, ident, args.as_slice(), tps.as_slice());
+        check_method_call(fcx, expr, ident, args.as_slice(), tps.as_slice(), lvalue_pref);
         let mut arg_tys = args.iter().map(|a| fcx.expr_ty(&**a));
         let (args_bot, args_err) = arg_tys.fold((false, false),
              |(rest_bot, rest_err), a| {
@@ -5081,9 +5036,9 @@ pub fn polytype_for_def(fcx: &FnCtxt,
           let typ = fcx.local_ty(sp, nid);
           return no_params(typ);
       }
-      def::DefFn(id, _, _) | def::DefStaticMethod(id, _, _) |
+      def::DefFn(id, _, _) | def::DefStaticMethod(id, _, _) | def::DefMethod(id, _, _) |
       def::DefStatic(id, _) | def::DefVariant(_, id, _) |
-      def::DefStruct(id) => {
+      def::DefStruct(id) | def::DefConst(id) => {
         return ty::lookup_item_type(fcx.ccx.tcx, id);
       }
       def::DefTrait(_) |
@@ -5110,9 +5065,6 @@ pub fn polytype_for_def(fcx: &FnCtxt,
       }
       def::DefSelfTy(..) => {
         fcx.ccx.tcx.sess.span_bug(sp, "expected value, found self ty");
-      }
-      def::DefMethod(..) => {
-        fcx.ccx.tcx.sess.span_bug(sp, "expected value, found method");
       }
     }
 }
@@ -5211,6 +5163,7 @@ pub fn instantiate_path(fcx: &FnCtxt,
 
         // Case 2. Reference to a top-level value.
         def::DefFn(..) |
+        def::DefConst(..) |
         def::DefStatic(..) => {
             segment_spaces = Vec::from_elem(path.segments.len() - 1, None);
             segment_spaces.push(Some(subst::FnSpace));
@@ -5284,8 +5237,7 @@ pub fn instantiate_path(fcx: &FnCtxt,
     }
 
     fcx.add_obligations_for_parameters(
-        traits::ObligationCause::new(span,
-                                     traits::ItemObligation(def.def_id())),
+        traits::ObligationCause::new(span, traits::ItemObligation(def.def_id())),
         &substs,
         &polytype.generics);
 
@@ -5633,25 +5585,6 @@ pub fn check_intrinsic_type(ccx: &CrateCtxt, it: &ast::ForeignItem) {
                     }
                 }
             },
-            "visit_tydesc" => {
-              let tydesc_ty = match ty::get_tydesc_ty(ccx.tcx) {
-                  Ok(t) => t,
-                  Err(s) => { tcx.sess.span_fatal(it.span, s.as_slice()); }
-              };
-              let region0 = ty::ReLateBound(it.id, ty::BrAnon(0));
-              let region1 = ty::ReLateBound(it.id, ty::BrAnon(1));
-              let visitor_object_ty =
-                    match ty::visitor_object_ty(tcx, region0, region1) {
-                        Ok((_, vot)) => vot,
-                        Err(s) => { tcx.sess.span_fatal(it.span, s.as_slice()); }
-                    };
-
-              let td_ptr = ty::mk_ptr(ccx.tcx, ty::mt {
-                  ty: tydesc_ty,
-                  mutbl: ast::MutImmutable
-              });
-              (0, vec!( td_ptr, visitor_object_ty ), ty::mk_nil())
-            }
             "offset" => {
               (1,
                vec!(

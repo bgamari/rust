@@ -96,6 +96,7 @@ pub fn path_to_string<PI: Iterator<PathElem>>(mut path: PI) -> String {
     }).to_string()
 }
 
+#[deriving(Show)]
 pub enum Node<'ast> {
     NodeItem(&'ast Item),
     NodeForeignItem(&'ast ForeignItem),
@@ -387,7 +388,7 @@ impl<'ast> Map<'ast> {
                                 PathName(ident.name)
                             }
                             MethMac(_) => {
-                                fail!("no path elem for {:?}", node)
+                                fail!("no path elem for {}", node)
                             }
                         }
                     }
@@ -401,13 +402,13 @@ impl<'ast> Map<'ast> {
                         MethDecl(ident, _, _, _, _, _, _, _) => {
                             PathName(ident.name)
                         }
-                        MethMac(_) => fail!("no path elem for {:?}", node),
+                        MethMac(_) => fail!("no path elem for {}", node),
                     }
                 }
                 TypeTraitItem(ref m) => PathName(m.ident.name),
             },
             NodeVariant(v) => PathName(v.node.name.name),
-            _ => fail!("no path elem for {:?}", node)
+            _ => fail!("no path elem for {}", node)
         }
     }
 
@@ -1018,6 +1019,7 @@ fn node_id_to_string(map: &Map, id: NodeId) -> String {
             let path_str = map.path_to_str_with_ident(id, item.ident);
             let item_str = match item.node {
                 ItemStatic(..) => "static",
+                ItemConst(..) => "const",
                 ItemFn(..) => "fn",
                 ItemMod(..) => "mod",
                 ItemForeignMod(..) => "foreign mod",

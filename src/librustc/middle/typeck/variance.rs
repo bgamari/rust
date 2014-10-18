@@ -232,6 +232,7 @@ pub fn infer_variance(tcx: &ty::ctxt) {
 
 type VarianceTermPtr<'a> = &'a VarianceTerm<'a>;
 
+#[deriving(Show)]
 struct InferredIndex(uint);
 
 enum VarianceTerm<'a> {
@@ -325,10 +326,10 @@ impl<'a, 'tcx> TermsContext<'a, 'tcx> {
         assert!(newly_added);
 
         debug!("add_inferred(item_id={}, \
-                kind={:?}, \
+                kind={}, \
                 index={}, \
                 param_id={},
-                inf_index={:?})",
+                inf_index={})",
                 item_id, kind, index, param_id, inf_index);
     }
 
@@ -384,6 +385,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for TermsContext<'a, 'tcx> {
 
             ast::ItemImpl(..) |
             ast::ItemStatic(..) |
+            ast::ItemConst(..) |
             ast::ItemFn(..) |
             ast::ItemMod(..) |
             ast::ItemForeignMod(..) |
@@ -528,6 +530,7 @@ impl<'a, 'tcx, 'v> Visitor<'v> for ConstraintContext<'a, 'tcx> {
             }
 
             ast::ItemStatic(..) |
+            ast::ItemConst(..) |
             ast::ItemFn(..) |
             ast::ItemMod(..) |
             ast::ItemForeignMod(..) |
@@ -850,7 +853,7 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                                    region_param_defs: &[ty::RegionParameterDef],
                                    substs: &subst::Substs,
                                    variance: VarianceTermPtr<'a>) {
-        debug!("add_constraints_from_substs(def_id={:?})", def_id);
+        debug!("add_constraints_from_substs(def_id={})", def_id);
 
         for p in type_param_defs.iter() {
             let variance_decl =

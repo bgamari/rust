@@ -73,6 +73,7 @@ static KNOWN_FEATURES: &'static [(&'static str, Status)] = &[
     ("slicing_syntax", Active),
 
     ("if_let", Active),
+    ("while_let", Active),
 
     // if you change this list without updating src/doc/reference.md, cmr will be sad
 
@@ -218,21 +219,10 @@ impl<'a, 'v> Visitor<'v> for Context<'a> {
                 }
             }
 
-            ast::ItemStruct(ref struct_definition, _) => {
+            ast::ItemStruct(..) => {
                 if attr::contains_name(i.attrs.as_slice(), "simd") {
                     self.gate_feature("simd", i.span,
                                       "SIMD types are experimental and possibly buggy");
-                }
-                match struct_definition.super_struct {
-                    Some(ref path) => self.gate_feature("struct_inherit", path.span,
-                                                        "struct inheritance is experimental \
-                                                         and possibly buggy"),
-                    None => {}
-                }
-                if struct_definition.is_virtual {
-                    self.gate_feature("struct_inherit", i.span,
-                                      "struct inheritance (`virtual` keyword) is \
-                                       experimental and possibly buggy");
                 }
             }
 
@@ -355,6 +345,10 @@ impl<'a, 'v> Visitor<'v> for Context<'a> {
                 self.gate_feature("slicing_syntax",
                                   e.span,
                                   "slicing syntax is experimental");
+            }
+            ast::ExprWhileLet(..) => {
+                self.gate_feature("while_let", e.span,
+                                  "`while let` syntax is experimental");
             }
             _ => {}
         }

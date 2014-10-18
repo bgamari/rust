@@ -230,6 +230,7 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
             def::DefAssociatedTy(..) |
             def::DefTrait(_) => Some(recorder::TypeRef),
             def::DefStatic(_, _) |
+            def::DefConst(_) |
             def::DefLocal(_) |
             def::DefVariant(_, _, _) |
             def::DefUpvar(..) => Some(recorder::VarRef),
@@ -243,9 +244,9 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
             def::DefStaticMethod(_, _, _) |
             def::DefTyParam(..) |
             def::DefUse(_) |
-            def::DefMethod(_, _) |
+            def::DefMethod(..) |
             def::DefPrimTy(_) => {
-                self.sess.span_bug(span, format!("lookup_def_kind for unexpected item: {:?}",
+                self.sess.span_bug(span, format!("lookup_def_kind for unexpected item: {}",
                                                  def).as_slice());
             },
         }
@@ -312,7 +313,7 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
                 },
                 _ => {
                     self.sess.span_bug(method.span,
-                                       format!("Container {} for method {} is not a node item {:?}",
+                                       format!("Container {} for method {} is not a node item {}",
                                                impl_id.node,
                                                method.id,
                                                self.analysis.ty_cx.map.get(impl_id.node)
@@ -513,6 +514,29 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
                             get_ident(item.ident).get(),
                             qualname.as_slice(),
                             value.as_slice(),
+                            ty_to_string(&*typ).as_slice(),
+                            self.cur_scope);
+
+        // walk type and init value
+        self.visit_ty(&*typ);
+        self.visit_expr(expr);
+    }
+
+    fn process_const(&mut self,
+                      item: &ast::Item,
+                      typ: &ast::Ty,
+                      expr: &ast::Expr)
+    {
+        let qualname = self.analysis.ty_cx.map.path_to_string(item.id);
+
+        let sub_span = self.span.sub_span_after_keyword(item.span,
+                                                        keywords::Const);
+        self.fmt.static_str(item.span,
+                            sub_span,
+                            item.id,
+                            get_ident(item.ident).get(),
+                            qualname.as_slice(),
+                            "",
                             ty_to_string(&*typ).as_slice(),
                             self.cur_scope);
 
@@ -740,6 +764,7 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
             def::DefUpvar(..) |
             def::DefLocal(..) |
             def::DefStatic(..) |
+            def::DefConst(..) |
             def::DefVariant(..) => self.fmt.ref_str(recorder::VarRef,
                                                     ex.span,
                                                     sub_span,
@@ -807,6 +832,7 @@ impl <'l, 'tcx> DxrVisitor<'l, 'tcx> {
             },
             def::DefLocal(_) |
             def::DefStatic(_,_) |
+            def::DefConst(..) |
             def::DefStruct(_) |
             def::DefFn(..) => self.write_sub_paths_truncated(path),
             _ => {},
@@ -1008,6 +1034,8 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DxrVisitor<'l, 'tcx> {
                 self.process_fn(item, &**decl, ty_params, &**body),
             ast::ItemStatic(ref typ, mt, ref expr) =>
                 self.process_static(item, &**typ, mt, &**expr),
+            ast::ItemConst(ref typ, ref expr) =>
+                self.process_const(item, &**typ, &**expr),
             ast::ItemStruct(ref def, ref ty_params) => self.process_struct(item, &**def, ty_params),
             ast::ItemEnum(ref def, ref ty_params) => self.process_enum(item, def, ty_params),
             ast::ItemImpl(ref ty_params,
@@ -1386,7 +1414,8 @@ impl<'l, 'tcx, 'v> Visitor<'v> for DxrVisitor<'l, 'tcx> {
                                                             self.cur_scope),
                 // FIXME(nrc) what is this doing here?
                 def::DefStatic(_, _) => {}
-                _ => error!("unexpected definition kind when processing collected paths: {:?}",
+                def::DefConst(..) => {}
+                _ => error!("unexpected definition kind when processing collected paths: {}",
                             *def)
             }
         }

@@ -14,6 +14,7 @@
 
 use core::prelude::*;
 
+use alloc::boxed::Box;
 use alloc::heap::{EMPTY, allocate, reallocate, deallocate};
 use core::cmp::max;
 use core::default::Default;
@@ -452,36 +453,14 @@ impl<T> Index<uint,T> for Vec<T> {
     }
 }
 
-// FIXME(#12825) Indexing will always try IndexMut first and that causes issues.
-/*impl<T> IndexMut<uint,T> for Vec<T> {
+#[cfg(not(stage0))]
+impl<T> IndexMut<uint,T> for Vec<T> {
     #[inline]
     fn index_mut<'a>(&'a mut self, index: &uint) -> &'a mut T {
         self.get_mut(*index)
     }
-}*/
-
-#[cfg(stage0)]
-impl<T> ops::Slice<uint, [T]> for Vec<T> {
-    #[inline]
-    fn as_slice_<'a>(&'a self) -> &'a [T] {
-        self.as_slice()
-    }
-
-    #[inline]
-    fn slice_from_<'a>(&'a self, start: &uint) -> &'a [T] {
-        self.as_slice().slice_from_(start)
-    }
-
-    #[inline]
-    fn slice_to_<'a>(&'a self, end: &uint) -> &'a [T] {
-        self.as_slice().slice_to_(end)
-    }
-    #[inline]
-    fn slice_<'a>(&'a self, start: &uint, end: &uint) -> &'a [T] {
-        self.as_slice().slice_(start, end)
-    }
 }
-#[cfg(not(stage0))]
+
 impl<T> ops::Slice<uint, [T]> for Vec<T> {
     #[inline]
     fn as_slice_<'a>(&'a self) -> &'a [T] {
@@ -503,28 +482,6 @@ impl<T> ops::Slice<uint, [T]> for Vec<T> {
     }
 }
 
-#[cfg(stage0)]
-impl<T> ops::SliceMut<uint, [T]> for Vec<T> {
-    #[inline]
-    fn as_mut_slice_<'a>(&'a mut self) -> &'a mut [T] {
-        self.as_mut_slice()
-    }
-
-    #[inline]
-    fn slice_from_mut_<'a>(&'a mut self, start: &uint) -> &'a mut [T] {
-        self.as_mut_slice().slice_from_mut_(start)
-    }
-
-    #[inline]
-    fn slice_to_mut_<'a>(&'a mut self, end: &uint) -> &'a mut [T] {
-        self.as_mut_slice().slice_to_mut_(end)
-    }
-    #[inline]
-    fn slice_mut_<'a>(&'a mut self, start: &uint, end: &uint) -> &'a mut [T] {
-        self.as_mut_slice().slice_mut_(start, end)
-    }
-}
-#[cfg(not(stage0))]
 impl<T> ops::SliceMut<uint, [T]> for Vec<T> {
     #[inline]
     fn as_mut_slice_<'a>(&'a mut self) -> &'a mut [T] {
@@ -611,13 +568,6 @@ impl<T> Collection for Vec<T> {
     fn len(&self) -> uint {
         self.len
     }
-}
-
-impl<T: Clone> CloneableVector<T> for Vec<T> {
-    #[deprecated = "call .clone() instead"]
-    fn to_vec(&self) -> Vec<T> { self.clone() }
-    #[deprecated = "move the vector instead"]
-    fn into_vec(self) -> Vec<T> { self }
 }
 
 // FIXME: #13996: need a way to mark the return value as `noalias`
@@ -754,6 +704,20 @@ impl<T> Vec<T> {
                                       mem::min_align_of::<T>()) as *mut T;
             }
             self.cap = self.len;
+        }
+    }
+
+    /// Convert the vector into Box<[T]>.
+    ///
+    /// Note that this will drop any excess capacity. Calling this and converting back to a vector
+    /// with `into_vec()` is equivalent to calling `shrink_to_fit()`.
+    #[experimental]
+    pub fn into_boxed_slice(mut self) -> Box<[T]> {
+        self.shrink_to_fit();
+        unsafe {
+            let xs: Box<[T]> = mem::transmute(self.as_mut_slice());
+            mem::forget(self);
+            xs
         }
     }
 
@@ -1734,7 +1698,7 @@ impl<T> MutableSeq<T> for Vec<T> {
             let size = max(old_size, 2 * mem::size_of::<T>()) * 2;
             if old_size > size { fail!("capacity overflow") }
             unsafe {
-                self.ptr = alloc_or_realloc(self.ptr, self.cap * mem::size_of::<T>(), size);
+                self.ptr = alloc_or_realloc(self.ptr, old_size, size);
             }
             self.cap = max(self.cap, 2) * 2;
         }
@@ -1758,7 +1722,6 @@ impl<T> MutableSeq<T> for Vec<T> {
             }
         }
     }
-
 }
 
 /// An iterator that moves out of a vector.
@@ -2191,7 +2154,6 @@ impl<T> Vec<T> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     extern crate test;
@@ -2303,8 +2265,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mut_slice_from() {
-        let mut values = Vec::from_slice([1u8,2,3,4,5]);
+    fn test_slice_from_mut() {
+        let mut values = vec![1u8,2,3,4,5];
         {
             let slice = values.slice_from_mut(2);
             assert!(slice == [3, 4, 5]);
@@ -2317,8 +2279,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mut_slice_to() {
-        let mut values = Vec::from_slice([1u8,2,3,4,5]);
+    fn test_slice_to_mut() {
+        let mut values = vec![1u8,2,3,4,5];
         {
             let slice = values.slice_to_mut(2);
             assert!(slice == [1, 2]);
@@ -2331,8 +2293,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mut_split_at() {
-        let mut values = Vec::from_slice([1u8,2,3,4,5]);
+    fn test_split_at_mut() {
+        let mut values = vec![1u8,2,3,4,5];
         {
             let (left, right) = values.split_at_mut(2);
             {
@@ -2352,7 +2314,7 @@ mod tests {
             }
         }
 
-        assert!(values == Vec::from_slice([2u8, 3, 5, 6, 7]));
+        assert!(values == vec![2u8, 3, 5, 6, 7]);
     }
 
     #[test]
@@ -2392,16 +2354,16 @@ mod tests {
 
     #[test]
     fn test_grow_fn() {
-        let mut v = Vec::from_slice([0u, 1]);
+        let mut v = vec![0u, 1];
         v.grow_fn(3, |i| i);
-        assert!(v == Vec::from_slice([0u, 1, 0, 1, 2]));
+        assert!(v == vec![0u, 1, 0, 1, 2]);
     }
 
     #[test]
     fn test_retain() {
-        let mut vec = Vec::from_slice([1u, 2, 3, 4]);
+        let mut vec = vec![1u, 2, 3, 4];
         vec.retain(|x| x%2 == 0);
-        assert!(vec == Vec::from_slice([2u, 4]));
+        assert!(vec == vec![2u, 4]);
     }
 
     #[test]
@@ -2604,32 +2566,39 @@ mod tests {
 
     #[test]
     fn test_move_items() {
-        let mut vec = vec!(1i, 2, 3);
-        let mut vec2 : Vec<int> = vec!();
+        let vec = vec![1, 2, 3];
+        let mut vec2 : Vec<i32> = vec![];
         for i in vec.into_iter() {
             vec2.push(i);
         }
-        assert!(vec2 == vec!(1i, 2, 3));
+        assert!(vec2 == vec![1, 2, 3]);
     }
 
     #[test]
     fn test_move_items_reverse() {
-        let mut vec = vec!(1i, 2, 3);
-        let mut vec2 : Vec<int> = vec!();
+        let vec = vec![1, 2, 3];
+        let mut vec2 : Vec<i32> = vec![];
         for i in vec.into_iter().rev() {
             vec2.push(i);
         }
-        assert!(vec2 == vec!(3i, 2, 1));
+        assert!(vec2 == vec![3, 2, 1]);
     }
 
     #[test]
     fn test_move_items_zero_sized() {
-        let mut vec = vec!((), (), ());
-        let mut vec2 : Vec<()> = vec!();
+        let vec = vec![(), (), ()];
+        let mut vec2 : Vec<()> = vec![];
         for i in vec.into_iter() {
             vec2.push(i);
         }
-        assert!(vec2 == vec!((), (), ()));
+        assert!(vec2 == vec![(), (), ()]);
+    }
+
+    #[test]
+    fn test_into_boxed_slice() {
+        let xs = vec![1u, 2, 3];
+        let ys = xs.into_boxed_slice();
+        assert_eq!(ys.as_slice(), [1u, 2, 3].as_slice());
     }
 
     #[bench]
@@ -2737,7 +2706,7 @@ mod tests {
         b.bytes = src_len as u64;
 
         b.iter(|| {
-            let dst = Vec::from_slice(src.clone().as_slice());
+            let dst = src.clone().as_slice().to_vec();
             assert_eq!(dst.len(), src_len);
             assert!(dst.iter().enumerate().all(|(i, x)| i == *x));
         });
@@ -2901,7 +2870,7 @@ mod tests {
 
         b.iter(|| {
             let mut dst = dst.clone();
-            dst.push_all_move(src.clone());
+            dst.extend(src.clone().into_iter());
             assert_eq!(dst.len(), dst_len + src_len);
             assert!(dst.iter().enumerate().all(|(i, x)| i == *x));
         });

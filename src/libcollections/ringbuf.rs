@@ -551,21 +551,21 @@ mod tests {
         assert_eq!(d.len(), 3u);
         d.push(137);
         assert_eq!(d.len(), 4u);
-        debug!("{:?}", d.front());
+        debug!("{}", d.front());
         assert_eq!(*d.front().unwrap(), 42);
-        debug!("{:?}", d.back());
+        debug!("{}", d.back());
         assert_eq!(*d.back().unwrap(), 137);
         let mut i = d.pop_front();
-        debug!("{:?}", i);
+        debug!("{}", i);
         assert_eq!(i, Some(42));
         i = d.pop();
-        debug!("{:?}", i);
+        debug!("{}", i);
         assert_eq!(i, Some(137));
         i = d.pop();
-        debug!("{:?}", i);
+        debug!("{}", i);
         assert_eq!(i, Some(137));
         i = d.pop();
-        debug!("{:?}", i);
+        debug!("{}", i);
         assert_eq!(i, Some(17));
         assert_eq!(d.len(), 0u);
         d.push(3);
@@ -576,10 +576,10 @@ mod tests {
         assert_eq!(d.len(), 3u);
         d.push_front(1);
         assert_eq!(d.len(), 4u);
-        debug!("{:?}", d.get(0));
-        debug!("{:?}", d.get(1));
-        debug!("{:?}", d.get(2));
-        debug!("{:?}", d.get(3));
+        debug!("{}", d.get(0));
+        debug!("{}", d.get(1));
+        debug!("{}", d.get(2));
+        debug!("{}", d.get(3));
         assert_eq!(*d.get(0), 1);
         assert_eq!(*d.get(1), 2);
         assert_eq!(*d.get(2), 3);
@@ -611,10 +611,10 @@ mod tests {
         assert_eq!(deq.len(), 3);
         deq.push_front(a.clone());
         assert_eq!(deq.len(), 4);
-        assert_eq!((*deq.get(0)).clone(), a.clone());
-        assert_eq!((*deq.get(1)).clone(), b.clone());
-        assert_eq!((*deq.get(2)).clone(), c.clone());
-        assert_eq!((*deq.get(3)).clone(), d.clone());
+        assert_eq!(deq[0].clone(), a.clone());
+        assert_eq!(deq[1].clone(), b.clone());
+        assert_eq!(deq[2].clone(), c.clone());
+        assert_eq!(deq[3].clone(), d.clone());
     }
 
     #[test]
@@ -626,7 +626,7 @@ mod tests {
         assert_eq!(deq.len(), 66);
 
         for i in range(0u, 66) {
-            assert_eq!(*deq.get(i), 65 - i);
+            assert_eq!(deq[i], 65 - i);
         }
 
         let mut deq = RingBuf::new();
@@ -635,7 +635,7 @@ mod tests {
         }
 
         for i in range(0u, 66) {
-            assert_eq!(*deq.get(i), i);
+            assert_eq!(deq[i], i);
         }
     }
 

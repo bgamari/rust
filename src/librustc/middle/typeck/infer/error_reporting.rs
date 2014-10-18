@@ -268,7 +268,7 @@ impl<'a, 'tcx> ErrorReporting for InferCtxt<'a, 'tcx> {
                 }
             }
             let pe = ProcessedErrors(var_origins, trace_origins, same_regions);
-            debug!("errors processed: {:?}", pe);
+            debug!("errors processed: {}", pe);
             processed_errors.push(pe);
         }
         return processed_errors;
@@ -297,7 +297,7 @@ impl<'a, 'tcx> ErrorReporting for InferCtxt<'a, 'tcx> {
                                      sub: Region,
                                      sup: Region)
                                      -> Option<FreeRegionsFromSameFn> {
-            debug!("free_regions_from_same_fn(sub={:?}, sup={:?})", sub, sup);
+            debug!("free_regions_from_same_fn(sub={}, sup={})", sub, sup);
             let (scope_id, fr1, fr2) = match (sub, sup) {
                 (ReFree(fr1), ReFree(fr2)) => {
                     if fr1.scope_id != fr2.scope_id {
@@ -366,6 +366,7 @@ impl<'a, 'tcx> ErrorReporting for InferCtxt<'a, 'tcx> {
             infer::RelateOutputImplTypes(_) => "mismatched types",
             infer::MatchExpressionArm(_, _) => "match arms have incompatible types",
             infer::IfExpression(_) => "if and else have incompatible types",
+            infer::IfExpressionWithNoElse(_) => "if may be missing an else clause",
         };
 
         self.tcx.sess.span_err(
@@ -1416,7 +1417,7 @@ impl<'a, 'tcx> ErrorReportingHelpers for InferCtxt<'a, 'tcx> {
                                               opt_explicit_self, generics);
         let msg = format!("consider using an explicit lifetime \
                            parameter as shown: {}", suggested_fn);
-        self.tcx.sess.span_note(span, msg.as_slice());
+        self.tcx.sess.span_help(span, msg.as_slice());
     }
 
     fn report_inference_failure(&self,
@@ -1485,6 +1486,9 @@ impl<'a, 'tcx> ErrorReportingHelpers for InferCtxt<'a, 'tcx> {
                     }
                     infer::IfExpression(_) => {
                         format!("if and else have compatible types")
+                    }
+                    infer::IfExpressionWithNoElse(_) => {
+                        format!("if may be missing an else clause")
                     }
                 };
 

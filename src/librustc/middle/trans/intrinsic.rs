@@ -122,7 +122,7 @@ pub fn check_intrinsics(ccx: &CrateContext) {
         if ty::type_is_fat_ptr(ccx.tcx(), transmute_restriction.to) ||
            ty::type_is_fat_ptr(ccx.tcx(), transmute_restriction.from) {
             ccx.sess()
-               .add_lint(::lint::builtin::TRANSMUTE_FAT_PTR,
+               .add_lint(::lint::builtin::FAT_PTR_TRANSMUTES,
                          transmute_restriction.id,
                          transmute_restriction.span,
                          format!("Transmuting fat pointer types; {} to {}.\
@@ -239,16 +239,16 @@ pub fn trans_intrinsic_call<'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>, node: ast::N
         (_, "size_of") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
             let lltp_ty = type_of::type_of(ccx, tp_ty);
-            C_uint(ccx, machine::llsize_of_real(ccx, lltp_ty) as uint)
+            C_uint(ccx, machine::llsize_of_real(ccx, lltp_ty))
         }
         (_, "min_align_of") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
-            C_uint(ccx, type_of::align_of(ccx, tp_ty) as uint)
+            C_uint(ccx, type_of::align_of(ccx, tp_ty))
         }
         (_, "pref_align_of") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
             let lltp_ty = type_of::type_of(ccx, tp_ty);
-            C_uint(ccx, machine::llalign_of_pref(ccx, lltp_ty) as uint)
+            C_uint(ccx, machine::llalign_of_pref(ccx, lltp_ty))
         }
         (_, "move_val_init") => {
             // Create a datum reflecting the value being moved.
@@ -269,7 +269,6 @@ pub fn trans_intrinsic_call<'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>, node: ast::N
         (_, "get_tydesc") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
             let static_ti = get_tydesc(ccx, tp_ty);
-            glue::lazily_emit_visit_glue(ccx, &*static_ti);
 
             // FIXME (#3730): ideally this shouldn't need a cast,
             // but there's a circularity between translating rust types to llvm
@@ -306,13 +305,6 @@ pub fn trans_intrinsic_call<'blk, 'tcx>(mut bcx: Block<'blk, 'tcx>, node: ast::N
         (_, "owns_managed") => {
             let tp_ty = *substs.types.get(FnSpace, 0);
             C_bool(ccx, ty::type_contents(ccx.tcx(), tp_ty).owns_managed())
-        }
-        (_, "visit_tydesc") => {
-            let td = *llargs.get(0);
-            let visitor = *llargs.get(1);
-            let td = PointerCast(bcx, td, ccx.tydesc_type().ptr_to());
-            glue::call_visit_glue(bcx, visitor, td);
-            C_nil(ccx)
         }
         (_, "offset") => {
             let ptr = *llargs.get(0);
